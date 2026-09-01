@@ -178,6 +178,12 @@ abstract class AppDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE courses RENAME TO courses_v4")
                 db.execSQL("ALTER TABLE course_weeks RENAME TO course_weeks_v4")
 
+                // SQLite 保留被重命名表上的索引名称；如果不先删除，下面的
+                // CREATE INDEX IF NOT EXISTS 会因为同名而跳过，最终旧表删除后新表没有索引。
+                db.execSQL("DROP INDEX IF EXISTS `index_courses_timetableId`")
+                db.execSQL("DROP INDEX IF EXISTS `index_courses_timetableId_source_remoteKey`")
+                db.execSQL("DROP INDEX IF EXISTS `index_course_weeks_weekNumber`")
+
                 db.execSQL(
                     """
                     CREATE TABLE IF NOT EXISTS `courses` (
@@ -363,6 +369,25 @@ abstract class AppDatabase : RoomDatabase() {
                 )
                 db.execSQL("DROP TABLE period_configs")
                 db.execSQL("ALTER TABLE period_configs_new RENAME TO period_configs")
+
+                // 修复早期 v5 数据库可能缺少的索引，并覆盖 4→5 迁移中
+                // 因 SQLite 重命名索引同名冲突而未创建成功的情况。
+                db.execSQL("DROP INDEX IF EXISTS `index_courses_timetableId`")
+                db.execSQL("CREATE INDEX `index_courses_timetableId` ON `courses`(`timetableId`)")
+                db.execSQL("DROP INDEX IF EXISTS `index_courses_timetableId_source_remoteKey`")
+                db.execSQL(
+                    "CREATE UNIQUE INDEX `index_courses_timetableId_source_remoteKey` " +
+                        "ON `courses`(`timetableId`, `source`, `remoteKey`)"
+                )
+                db.execSQL("DROP INDEX IF EXISTS `index_course_sections_courseId`")
+                db.execSQL("CREATE INDEX `index_course_sections_courseId` ON `course_sections`(`courseId`)")
+                db.execSQL("DROP INDEX IF EXISTS `index_course_sections_courseId_source_remoteKey`")
+                db.execSQL(
+                    "CREATE UNIQUE INDEX `index_course_sections_courseId_source_remoteKey` " +
+                        "ON `course_sections`(`courseId`, `source`, `remoteKey`)"
+                )
+                db.execSQL("DROP INDEX IF EXISTS `index_course_weeks_weekNumber`")
+                db.execSQL("CREATE INDEX `index_course_weeks_weekNumber` ON `course_weeks`(`weekNumber`)")
             }
         }
     }
