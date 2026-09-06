@@ -9,13 +9,17 @@ import android.os.Build
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -56,6 +60,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.core.content.ContextCompat
 import com.example.awake.data.local.PeriodConfigEntity
@@ -74,6 +79,7 @@ import com.example.awake.data.update.ApkUpdateSupport
 import com.example.awake.data.update.GitHubRelease
 import com.example.awake.data.update.GitHubReleaseChecker
 import com.example.awake.ui.theme.ThemeMode
+import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -170,6 +176,7 @@ fun SettingsScreen(
 
     var section by remember { mutableStateOf(SettingsSection.OVERVIEW) }
     val showOtherWeeks by displaySettings.showOtherWeeks.collectAsStateWithLifecycle()
+    val periodsPerScreen by displaySettings.periodsPerScreen.collectAsStateWithLifecycle()
     val currentThemeMode by themeMode.collectAsStateWithLifecycle()
 
     fun checkSessions() {
@@ -203,7 +210,7 @@ fun SettingsScreen(
                     }
                 }
                 .onFailure { error ->
-                    updateStatus = "检查失败：${error.message ?: "网络异常"}。可手动访问 github.com/Lunaunde/awake/releases"
+                    updateStatus = "检查失败：${error.message ?: "网络异常"}。可手动访问 github.com/yeguoyy/awake/releases"
                 }
             updateChecking = false
         }
@@ -299,6 +306,14 @@ fun SettingsScreen(
                         title = "课表显示",
                         subtitle = if (showOtherWeeks) "非本周课程半透明显示 · 已开启" else "只显示本周课程 · 已关闭",
                         onClick = { section = SettingsSection.DISPLAY }
+                    )
+                    SettingsOption(
+                        title = "课表纵向拉伸",
+                        subtitle = "当前约一屏 $periodsPerScreen 节 · 可调整",
+                        onClick = {
+                            displaySettings.requestShowLengthEditor()
+                            onBack()
+                        }
                     )
                     Text("外观", style = MaterialTheme.typography.titleMedium)
                     SettingsOption(
@@ -435,6 +450,14 @@ fun SettingsScreen(
                         "开启后，当前课表中不属于所选周次的课程会保留在课表中，并以半透明显示。",
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                    SettingsOption(
+                        title = "课表纵向拉伸",
+                        subtitle = "当前约一屏 $periodsPerScreen 节",
+                        onClick = {
+                            displaySettings.requestShowLengthEditor()
+                            onBack()
+                        }
+                    )
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
@@ -530,7 +553,7 @@ fun SettingsScreen(
                 SettingsSection.UPDATE -> {
                     Text("检查更新", style = MaterialTheme.typography.titleLarge)
                     Text(
-                        "通过 GitHub Releases 检测最新版本（仓库：Lunaunde/awake）。国内网络访问 GitHub 可能不稳定，检查失败时可手动到 Releases 页面查看。",
+                        "通过 GitHub Releases 检测最新版本（仓库：yeguoyy/awake）。国内网络访问 GitHub 可能不稳定，检查失败时可手动到 Releases 页面查看。",
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Card(
@@ -579,7 +602,7 @@ fun SettingsScreen(
                             }
                         }
                     }
-                    TextButton(onClick = { openInBrowser("https://github.com/Lunaunde/awake/releases") }) {
+                    TextButton(onClick = { openInBrowser("https://github.com/yeguoyy/awake/releases") }) {
                         Text("在浏览器打开 GitHub Releases 页面")
                     }
                 }
@@ -760,3 +783,8 @@ private fun SettingsOption(
         }
     }
 }
+
+
+
+
+

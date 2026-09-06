@@ -26,7 +26,7 @@ import kotlinx.coroutines.runBlocking
  *   （行高 = 节次数 × 50dp），课程合并为一整块；跨段课程用 full/top/mid/bottom
  *   拼块 drawable 无缝拼成整块；空段拆成单节行，保留每个节次的标签和时间；
  * - 非本周课程与 App 内一致：跟随显示（设置页「显示非本周」）、42% 淡化、
- *   单双周/手动标注（[weekParityLabel] 与 App 的 pill 同规则）；
+ *   单双周标注（[weekParityLabel] 与 App 的 pill 同规则）；
  * - 课程格配色与 App 同源：[WidgetPalette.paletteForAccent] 复刻 CourseCard 的
  *   HSV 算法，「外层描边层 + 内缩 1dp 填充层」实现 1dp accent 描边观感。
  */
@@ -238,17 +238,13 @@ class AwakeWidgetListService : RemoteViewsService() {
             return views
         }
 
-        /** 课程格文字：课程名（连堂 ≥2 节追加 @教室，与 App 一致）+ 单双周/手动标注（与 App 的 pill 同规则）。 */
+        /** 课程格文字：课程名（连堂 ≥2 节追加 @教室，与 App 一致）+ 单双周标注（与 App 的 pill 同规则）。 */
         private fun courseText(piece: CellPiece): String {
             val course = piece.course
             val text = StringBuilder(course.name.ifBlank { "未命名" })
             val span = course.endPeriod - course.startPeriod + 1
             if (span >= 2 && course.room.isNotBlank()) text.append("\n@").append(course.room)
-            val tag = if (course.source == "MANUAL") {
-                "手动"
-            } else {
-                weekParityLabel(course.rawWeekText, viewedWeek, totalWeeks)
-            }
+            val tag = weekParityLabel(course.rawWeekText, viewedWeek, totalWeeks)
             if (tag != null) text.append("\n").append(tag)
             return text.toString()
         }

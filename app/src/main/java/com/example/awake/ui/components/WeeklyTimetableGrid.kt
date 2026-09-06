@@ -54,9 +54,8 @@ private val GridBackground = Color.Transparent
 private val TimeColumnWidth = 34.dp
 private val HeaderHeight = 40.dp
 private val DefaultRowHeight = 54.dp
-private val MinRowHeight = 54.dp
-private val MaxRowHeight = 72.dp
-private val PeriodCount = PeriodConfigDefaults.periodCount
+private val MinRowHeight = 44.dp
+private val MaxRowHeight = 120.dp
 
 /** 紧凑周视图：7 个星期列始终铺满屏幕，避免默认横向滚动导致一次只能看见 2~3 天。 */
 @Composable
@@ -72,6 +71,7 @@ fun WeeklyTimetableGrid(
     nextWeek: Int = currentWeek + 1,
     nextWeekCourseIds: Set<Long> = emptySet(),
     periodConfigs: List<PeriodConfigEntity> = emptyList(),
+    periodsPerScreen: Int = PeriodConfigDefaults.periodCount,
     onCourseClick: (Long) -> Unit,
     onEmptyClick: (dayOfWeek: Int, startPeriod: Int) -> Unit,
     onWeekSwipe: (Int) -> Unit = {},
@@ -90,6 +90,8 @@ fun WeeklyTimetableGrid(
         buildCoursePaletteMap(courses + previousCourses + nextCourses, darkTheme)
     }
 
+    val totalPeriodCount = PeriodConfigDefaults.periodCount
+
     BoxWithConstraints(
         modifier = modifier
             .fillMaxWidth()
@@ -97,18 +99,18 @@ fun WeeklyTimetableGrid(
             .clipToBounds()
             .padding(horizontal = 2.dp, vertical = 4.dp)
     ) {
-        // 课表区域由外层 weight 提供可用高度。优先把 11 个节次均匀拉伸到视口底部，
-        // 这样小屏仍保持紧凑，大屏也不会在第 11 节之后留下大块空白；内容超出时仍可上下滚动。
+        // 课表区域由外层 weight 提供可用高度。periodsPerScreen 只控制一屏期望展示的节次数，
+        // 用来推算纵向行高；所有节次始终渲染，超出部分可上下滚动。
         // 显式引用 BoxWithConstraintsScope，规避 UnusedBoxWithConstraintsScope 的 lint 误报。
         val rowHeight = if (this@BoxWithConstraints.maxHeight != Dp.Infinity && this@BoxWithConstraints.maxHeight > 0.dp) {
-            ((this@BoxWithConstraints.maxHeight - HeaderHeight - 8.dp) / PeriodCount)
+            ((this@BoxWithConstraints.maxHeight - HeaderHeight - 8.dp) / periodsPerScreen)
                 .coerceIn(MinRowHeight, MaxRowHeight)
         } else {
             DefaultRowHeight
         }
         val pageWidth = this@BoxWithConstraints.maxWidth
         val pageWidthPx = with(density) { pageWidth.toPx() }
-        val gridHeight = HeaderHeight + rowHeight * PeriodCount
+        val gridHeight = HeaderHeight + rowHeight * totalPeriodCount
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -178,7 +180,9 @@ fun WeeklyTimetableGrid(
                     currentWeekCourseIds = previousWeekCourseIds,
                     totalWeeks = totalWeeks,
                     rowHeight = rowHeight,
+                    totalPeriodCount = totalPeriodCount,
                     periodByNumber = periodByNumber,
+                    periodsPerScreen = periodsPerScreen,
                     dayNames = dayNames,
                     paletteByCourse = paletteByCourse,
                     todayDayOfWeek = null,
@@ -195,7 +199,9 @@ fun WeeklyTimetableGrid(
                     currentWeekCourseIds = currentWeekCourseIds,
                     totalWeeks = totalWeeks,
                     rowHeight = rowHeight,
+                    totalPeriodCount = totalPeriodCount,
                     periodByNumber = periodByNumber,
+                    periodsPerScreen = periodsPerScreen,
                     dayNames = dayNames,
                     paletteByCourse = paletteByCourse,
                     todayDayOfWeek = todayDayOfWeek,
@@ -212,7 +218,9 @@ fun WeeklyTimetableGrid(
                     currentWeekCourseIds = nextWeekCourseIds,
                     totalWeeks = totalWeeks,
                     rowHeight = rowHeight,
+                    totalPeriodCount = totalPeriodCount,
                     periodByNumber = periodByNumber,
+                    periodsPerScreen = periodsPerScreen,
                     dayNames = dayNames,
                     paletteByCourse = paletteByCourse,
                     todayDayOfWeek = null,
@@ -233,7 +241,9 @@ private fun WeekGridPage(
     currentWeekCourseIds: Set<Long>,
     totalWeeks: Int,
     rowHeight: Dp,
+    totalPeriodCount: Int,
     periodByNumber: Map<Int, PeriodConfigEntity>,
+    periodsPerScreen: Int,
     dayNames: List<String>,
     paletteByCourse: Map<Long, CoursePalette>,
     todayDayOfWeek: Int?,
@@ -255,7 +265,7 @@ private fun WeekGridPage(
                         color = MaterialTheme.colorScheme.onSurface
                     )
                 }
-                (1..PeriodCount).forEach { period ->
+                (1..totalPeriodCount).forEach { period ->
                     Box(
                         modifier = Modifier.height(rowHeight).fillMaxWidth(),
                         contentAlignment = Alignment.TopStart
@@ -340,10 +350,10 @@ private fun WeekGridPage(
                         }
                     }
                     Box(
-                        modifier = Modifier.height(rowHeight * PeriodCount).fillMaxWidth()
+                        modifier = Modifier.height(rowHeight * totalPeriodCount).fillMaxWidth()
                     ) {
                         Column(modifier = Modifier.fillMaxWidth()) {
-                            (1..PeriodCount).forEach { period ->
+                            (1..totalPeriodCount).forEach { period ->
                                 Box(
                                     modifier = Modifier
                                         .height(rowHeight)
@@ -500,3 +510,8 @@ private fun LegendItem(color: Color, text: String) {
         Text(text, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
+
+
+
+
+

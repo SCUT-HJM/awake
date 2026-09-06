@@ -59,9 +59,6 @@ fun CourseCard(course: CourseSlotEntity, onClick: () -> Unit, modifier: Modifier
                 if (course.room.isNotBlank()) Text(course.room, style = MaterialTheme.typography.bodySmall)
                 Text("第${course.startPeriod}-${course.endPeriod}节 · ${course.rawWeekText}", style = MaterialTheme.typography.labelSmall)
             }
-            if (course.source == "MANUAL") {
-                StatusPill("手动", accent)
-            }
         }
     }
 }
@@ -141,12 +138,8 @@ fun WeekGridCourseCard(
                             overflow = TextOverflow.Ellipsis
                         )
                     }
-                    if (course.source == "MANUAL") {
-                        StatusPill("手动", accent)
-                    } else {
-                        weekParityLabel(course.rawWeekText, currentWeek, totalWeeks)?.let {
-                            StatusPill(it, accent)
-                        }
+                    weekParityLabel(course.rawWeekText, currentWeek, totalWeeks)?.let {
+                        StatusPill(it, accent)
                     }
                 }
             }

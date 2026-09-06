@@ -107,7 +107,7 @@ apk-sha256: <APK 的 SHA-256>
 更新内容：……
 ```
 
-- 检测地址：`https://api.github.com/repos/Lunaunde/awake/releases/latest`（取最近的非预发布 Release）。
+- 检测地址：`https://api.github.com/repos/yeguoyy/awake/releases/latest`（取最近的非预发布 Release）。
 - 国内网络直连 GitHub 可能不稳定，发布时可考虑给浏览器下载链接加镜像。
 
 ## 隐私与网络边界

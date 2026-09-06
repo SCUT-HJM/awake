@@ -106,6 +106,8 @@ class TimetableViewModel(
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     val showOtherWeeks: StateFlow<Boolean> = displaySettings.showOtherWeeks
+    val periodsPerScreen: StateFlow<Int> = displaySettings.periodsPerScreen
+    val showLengthEditor: StateFlow<Boolean> = displaySettings.showLengthEditor
     /** 节次时间跟随当前选中课表（无独立配置时回退全局默认）。 */
     val periodConfigs: StateFlow<List<com.example.awake.data.local.PeriodConfigEntity>> =
         selectedTimetableId.flatMapLatest { id ->
@@ -207,6 +209,14 @@ class TimetableViewModel(
 
     fun selectWeek(week: Int) {
         currentWeek.value = week.coerceIn(1, 30)
+    }
+
+    fun setPeriodsPerScreen(count: Int) {
+        displaySettings.setPeriodsPerScreen(count)
+    }
+
+    fun closeLengthEditor() {
+        displaySettings.closeLengthEditor()
     }
 
     fun renameTimetable(id: Long, label: String) {
@@ -325,3 +335,5 @@ class TimetableViewModelFactory(
     override fun <T : ViewModel> create(modelClass: Class<T>): T =
         TimetableViewModel(observe, refresh, local, reminderCoordinator, selection, displaySettings, remote, jsonTimetableStore) as T
 }
+
+

@@ -60,6 +60,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.awake.data.local.TimetableEntity
+import com.example.awake.data.repository.TimetableDisplaySettingsStore
 import com.example.awake.ui.components.GridLegend
 import com.example.awake.ui.components.WeeklyTimetableGrid
 import com.example.awake.ui.theme.LocalDarkTheme
@@ -100,6 +101,8 @@ fun TimetableScreen(
     val coursesThroughEnd by viewModel.coursesThroughEnd.collectAsStateWithLifecycle()
     val adjacentWeekPages by viewModel.adjacentWeekPages.collectAsStateWithLifecycle()
     val showOtherWeeks by viewModel.showOtherWeeks.collectAsStateWithLifecycle()
+    val periodsPerScreen by viewModel.periodsPerScreen.collectAsStateWithLifecycle()
+    val showLengthEditor by viewModel.showLengthEditor.collectAsStateWithLifecycle()
     val periodConfigs by viewModel.periodConfigs.collectAsStateWithLifecycle()
     val message by viewModel.message.collectAsStateWithLifecycle()
     val syncState by viewModel.syncState.collectAsStateWithLifecycle()
@@ -207,6 +210,7 @@ fun TimetableScreen(
                     nextWeek = nextPage?.week ?: (week + 1),
                     nextWeekCourseIds = nextPage?.currentCourseIds.orEmpty(),
                     periodConfigs = periodConfigs,
+                    periodsPerScreen = periodsPerScreen,
                     onCourseClick = onCourse,
                     onEmptyClick = { day, period ->
                         selectedId?.let { onAddCourse(it, day, period) }
@@ -251,6 +255,31 @@ fun TimetableScreen(
         }
     }
 
+    if (showLengthEditor) {
+        ModalBottomSheet(
+            onDismissRequest = viewModel::closeLengthEditor,
+            modifier = Modifier.navigationBarsPadding(),
+            scrimColor = Color.Transparent
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp)
+                    .padding(bottom = 24.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Text("一屏约显示 $periodsPerScreen 节", style = MaterialTheme.typography.titleMedium)
+                Slider(
+                    value = periodsPerScreen.toFloat(),
+                    onValueChange = { viewModel.setPeriodsPerScreen(it.roundToInt()) },
+                    valueRange = TimetableDisplaySettingsStore.MIN_PERIODS_PER_SCREEN.toFloat()
+                        ..TimetableDisplaySettingsStore.MAX_PERIODS_PER_SCREEN.toFloat(),
+                    steps = TimetableDisplaySettingsStore.MAX_PERIODS_PER_SCREEN -
+                        TimetableDisplaySettingsStore.MIN_PERIODS_PER_SCREEN - 1
+                )
+            }
+        }
+    }
     if (pendingSyncConfirm) {
         AlertDialog(
             onDismissRequest = { viewModel.cancelSyncConfirm() },
@@ -623,3 +652,7 @@ private fun formatWeekDate(timetable: TimetableEntity?, week: Int): String? = ru
         SimpleDateFormat("yyyy/M/d", Locale.CHINA).format(calendar.time)
     }
 }.getOrNull()
+
+
+
+
