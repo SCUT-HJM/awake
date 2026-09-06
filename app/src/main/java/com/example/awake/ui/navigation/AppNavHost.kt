@@ -45,6 +45,7 @@ fun AppNavHost(container: AppContainer) {
         composable(Routes.TIMETABLE) {
             TimetableScreen(
                 viewModel = timetableVm,
+                auth = container.authRepository,
                 onLogin = { navController.navigate(Routes.LOGIN) },
                 onImportAdd = { navController.navigate(Routes.termImport("add")) },
                 onImportOverwrite = { navController.navigate(Routes.termImport("overwrite")) },
@@ -76,6 +77,7 @@ fun AppNavHost(container: AppContainer) {
                     container.timetableSelectionStore,
                     container.scutRepository,
                     container.academicTermsCache,
+                    container.authRepository,
                     importMode,
                     container.jsonTimetableStore
                 )
@@ -95,6 +97,8 @@ fun AppNavHost(container: AppContainer) {
                 selection = container.timetableSelectionStore,
                 displaySettings = container.timetableDisplaySettingsStore,
                 remote = container.scutClient,
+                themeMode = container.themeModeFlow,
+                onThemeModeChange = container::setThemeMode,
                 onBack = { navController.popBackStack() },
                 onLogin = { navController.navigate(Routes.LOGIN) }
             )

@@ -3,14 +3,17 @@ package com.example.awake.ui.components
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.requiredWidth
@@ -44,6 +47,7 @@ import com.example.awake.data.local.CourseSlotEntity
 import com.example.awake.data.local.PeriodConfigDefaults
 import com.example.awake.data.local.PeriodConfigEntity
 import com.example.awake.domain.parser.WeekExpressionParser
+import com.example.awake.ui.theme.LocalDarkTheme
 
 private val GridLine = Color(0xFFD8E2E8)
 private val GridBackground = Color.Transparent
@@ -71,6 +75,8 @@ fun WeeklyTimetableGrid(
     onCourseClick: (Long) -> Unit,
     onEmptyClick: (dayOfWeek: Int, startPeriod: Int) -> Unit,
     onWeekSwipe: (Int) -> Unit = {},
+    /** 当前周为本周时传入今天（周一=1…周日=7），用于把今天的表头加深刻画；查看其他周时为 null。 */
+    todayDayOfWeek: Int? = null,
     modifier: Modifier = Modifier
 ) {
     val vertical = rememberScrollState()
@@ -79,8 +85,9 @@ fun WeeklyTimetableGrid(
     val density = LocalDensity.current
     val dayNames = listOf("一", "二", "三", "四", "五", "六", "日")
     val periodByNumber = periodConfigs.associateBy { it.period }
-    val paletteByCourse = remember(courses, previousCourses, nextCourses) {
-        buildCoursePaletteMap(courses + previousCourses + nextCourses)
+    val darkTheme = LocalDarkTheme.current
+    val paletteByCourse = remember(courses, previousCourses, nextCourses, darkTheme) {
+        buildCoursePaletteMap(courses + previousCourses + nextCourses, darkTheme)
     }
 
     BoxWithConstraints(
@@ -174,6 +181,7 @@ fun WeeklyTimetableGrid(
                     periodByNumber = periodByNumber,
                     dayNames = dayNames,
                     paletteByCourse = paletteByCourse,
+                    todayDayOfWeek = null,
                     onCourseClick = onCourseClick,
                     onEmptyClick = onEmptyClick
                 )
@@ -190,6 +198,7 @@ fun WeeklyTimetableGrid(
                     periodByNumber = periodByNumber,
                     dayNames = dayNames,
                     paletteByCourse = paletteByCourse,
+                    todayDayOfWeek = todayDayOfWeek,
                     onCourseClick = onCourseClick,
                     onEmptyClick = onEmptyClick
                 )
@@ -206,6 +215,7 @@ fun WeeklyTimetableGrid(
                     periodByNumber = periodByNumber,
                     dayNames = dayNames,
                     paletteByCourse = paletteByCourse,
+                    todayDayOfWeek = null,
                     onCourseClick = onCourseClick,
                     onEmptyClick = onEmptyClick
                 )
@@ -226,6 +236,7 @@ private fun WeekGridPage(
     periodByNumber: Map<Int, PeriodConfigEntity>,
     dayNames: List<String>,
     paletteByCourse: Map<Long, CoursePalette>,
+    todayDayOfWeek: Int?,
     onCourseClick: (Long) -> Unit,
     onEmptyClick: (dayOfWeek: Int, startPeriod: Int) -> Unit
 ) {
@@ -241,7 +252,7 @@ private fun WeekGridPage(
                         "节次",
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = MaterialTheme.colorScheme.onSurface
                     )
                 }
                 (1..PeriodCount).forEach { period ->
@@ -255,20 +266,22 @@ private fun WeekGridPage(
                         ) {
                             Text(
                                 text = period.toString(),
-                                style = MaterialTheme.typography.labelSmall,
-                                fontWeight = FontWeight.SemiBold,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface
                             )
                             periodByNumber[period]?.let { config ->
                                 Text(
                                     text = config.startTime,
-                                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 8.sp),
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.onSurface
                                 )
                                 Text(
                                     text = config.endTime,
-                                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 8.sp),
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.onSurface
                                 )
                             }
                         }
@@ -288,16 +301,42 @@ private fun WeekGridPage(
                         contentAlignment = Alignment.Center
                     ) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            // 今天所在列用主题主色加深刻画（仅本周页传入 todayDayOfWeek，
+                            // 相邻周页固定为 null，不会在其他周出现）；其余列加深为 onSurface。
+                            val todayColor = if (todayDayOfWeek == day) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                MaterialTheme.colorScheme.onSurface
+                            }
                             Text(
                                 text = name,
                                 style = MaterialTheme.typography.titleSmall,
-                                fontWeight = FontWeight.Bold
+                                fontWeight = FontWeight.Bold,
+                                color = todayColor
                             )
                             Text(
                                 text = day.toString(),
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = todayColor
                             )
+                            if (todayDayOfWeek == day) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(14.dp)
+                                        .background(MaterialTheme.colorScheme.primary, CircleShape),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = "今",
+                                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 8.sp),
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.onPrimary
+                                    )
+                                }
+                            } else {
+                                Spacer(modifier = Modifier.height(14.dp))
+                            }
                         }
                     }
                     Box(
@@ -332,7 +371,7 @@ private fun WeekGridPage(
                                 currentWeek = currentWeek,
                                 totalWeeks = totalWeeks,
                                 palette = paletteByCourse[positioned.course.courseId]
-                                    ?: paletteForAccent(positioned.course.color),
+                                    ?: paletteForAccent(positioned.course.color, LocalDarkTheme.current),
                                 onClick = { onCourseClick(positioned.course.courseId) }
                             )
                         }

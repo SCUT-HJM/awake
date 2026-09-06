@@ -29,8 +29,8 @@ android {
         applicationId = "com.example.awake"
         minSdk = 24
         targetSdk = 36
-        versionCode = 200
-        versionName = "2.0.0"
+        versionCode = 232
+        versionName = "2.3.2"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
