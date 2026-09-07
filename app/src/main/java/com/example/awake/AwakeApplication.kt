@@ -16,6 +16,13 @@ import com.example.awake.data.remote.SchoolAdapterRegistry
 import com.example.awake.data.remote.ScutAuthRepository
 import com.example.awake.data.remote.ScutJwClient
 import com.example.awake.data.remote.SessionCookieStore
+import com.example.awake.data.remote.JnuAuthRepository
+import com.example.awake.data.remote.JnuJwClient
+import com.example.awake.data.remote.JnuSessionStore
+import com.example.awake.data.remote.JnuWebApiBridge
+import com.example.awake.data.remote.JnuWebViewCoordinator
+import com.example.awake.data.repository.JnuScheduleRepository
+import com.example.awake.data.repository.SchoolScheduleRouter
 import com.example.awake.data.repository.LocalTimetableRepository
 import com.example.awake.data.repository.ReminderCoordinator
 import com.example.awake.data.repository.ReminderSettingsStore
@@ -57,6 +64,12 @@ class AppContainer(context: android.content.Context) {
         .addMigrations(AppDatabase.MIGRATION_3_4)
         .addMigrations(AppDatabase.MIGRATION_4_5)
         .addMigrations(AppDatabase.MIGRATION_5_6)
+        .addMigrations(AppDatabase.MIGRATION_6_7)
+        .addMigrations(AppDatabase.MIGRATION_7_8)
+        .addMigrations(AppDatabase.MIGRATION_8_9)
+        .addMigrations(AppDatabase.MIGRATION_9_10)
+        .addMigrations(AppDatabase.MIGRATION_10_11)
+        .addMigrations(AppDatabase.MIGRATION_11_12)
         .build()
     val cookieStore = SessionCookieStore()
     val academicTermsCache = AcademicTermsCache()
@@ -87,6 +100,24 @@ class AppContainer(context: android.content.Context) {
         client = scutClient,
         mapper = ScutScheduleMapper(),
         adapters = schoolAdapterRegistry
+    )
+    val jnuSessionStore = JnuSessionStore()
+    val jnuWebApi = JnuWebApiBridge(appContext)
+    val jnuClient = JnuJwClient(jnuSessionStore, webApi = jnuWebApi)
+    val jnuCoordinator = JnuWebViewCoordinator(jnuSessionStore, jnuWebApi)
+    val jnuAuthRepository = JnuAuthRepository(jnuCoordinator, jnuSessionStore)
+    val jnuRepository = JnuScheduleRepository(
+        localRepository,
+        jnuClient,
+        ScutScheduleMapper(),
+        restoreSession = { jnuCoordinator.refreshFromCookieManager() }
+    )
+    val scheduleRouter = SchoolScheduleRouter(
+        localRepository,
+        mapOf(
+            "SCUT" to scutRepository,
+            "JNU" to jnuRepository
+        )
     )
     val legacyImporter = LegacyCourseImporter(database)
 

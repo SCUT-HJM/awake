@@ -7,11 +7,12 @@ import org.junit.Test
 
 class SchoolAdapterRegistryTest {
     @Test
-    fun defaultRegistryContainsOnlyScut() {
+    fun defaultRegistryContainsScutAndJnu() {
         val registry = SchoolAdapterRegistry()
 
-        assertEquals(listOf("SCUT"), registry.all().map { it.code })
+        assertEquals(listOf("SCUT", "JNU"), registry.all().map { it.code })
         assertEquals("华南理工大学", registry.get("SCUT")?.displayName)
+        assertEquals("暨南大学", registry.get("JNU")?.displayName)
     }
 
     @Test

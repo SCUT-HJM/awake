@@ -8,12 +8,13 @@ import com.example.awake.data.remote.ScutHttpException
 import com.example.awake.data.remote.ScutAccessMode
 import com.example.awake.data.remote.SessionAvailability
 import com.example.awake.data.remote.SessionAvailabilityState
-import com.example.awake.data.repository.ScutScheduleRepository
+import com.example.awake.data.repository.SchoolScheduleRouter
 import com.example.awake.data.repository.LocalTimetableRepository
 import com.example.awake.data.repository.ReminderCoordinator
 import com.example.awake.data.repository.TimetableSelectionStore
 import com.example.awake.data.repository.TimetableDisplaySettingsStore
 import com.example.awake.domain.usecase.ObserveTimetableUseCase
+import com.example.awake.domain.model.SchoolCode
 import com.example.awake.domain.usecase.RefreshTimetableUseCase
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -54,7 +55,7 @@ class TimetableViewModel(
     private val reminderCoordinator: ReminderCoordinator,
     private val selection: TimetableSelectionStore,
     private val displaySettings: TimetableDisplaySettingsStore,
-    private val remote: ScutScheduleRepository,
+    private val remote: SchoolScheduleRouter,
     private val jsonTimetableStore: com.example.awake.data.repository.JsonTimetableStore
 ) : ViewModel() {
     /** JSON 分享课表首次刷新前的确认请求（弹窗由界面展示）。 */
@@ -108,10 +109,10 @@ class TimetableViewModel(
     val showOtherWeeks: StateFlow<Boolean> = displaySettings.showOtherWeeks
     val periodsPerScreen: StateFlow<Int> = displaySettings.periodsPerScreen
     val showLengthEditor: StateFlow<Boolean> = displaySettings.showLengthEditor
-    /** 节次时间跟随当前选中课表（无独立配置时回退全局默认）。 */
+    /** 节次时间跟随当前课表所属学校；课表有独立配置时优先使用独立配置。 */
     val periodConfigs: StateFlow<List<com.example.awake.data.local.PeriodConfigEntity>> =
-        selectedTimetableId.flatMapLatest { id ->
-            if (id == null) flowOf(emptyList()) else local.observePeriodConfigsFor(id)
+        selectedTimetable.flatMapLatest { timetable ->
+            if (timetable == null) flowOf(emptyList()) else local.observePeriodConfigsFor(timetable)
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     private val _message = MutableStateFlow<String?>(null)
     val message = _message.asStateFlow()
@@ -296,8 +297,13 @@ class TimetableViewModel(
     private fun doRefresh(id: Long) {
         viewModelScope.launch {
             _syncState.value = TimetableSyncState.REFRESHING
-            _message.value = "正在检查直连/VPN会话并同步课表…"
-            val sessions = runCatching { withContext(Dispatchers.IO) { remote.probeSessions() } }.getOrDefault(emptyList())
+            val school = runCatching {
+                withContext(Dispatchers.IO) { local.getTimetable(id).schoolCode }
+            }.getOrNull()?.let { code ->
+                SchoolCode.entries.firstOrNull { it.code == code }
+            } ?: SchoolCode.SCUT
+            _message.value = "正在检查${school.displayName}教务会话并同步课表…"
+            val sessions = runCatching { withContext(Dispatchers.IO) { remote.probeSessions(school) } }.getOrDefault(emptyList())
             runCatching { withContext(Dispatchers.IO) { refreshUseCase(id) } }
                 .onSuccess { warnings ->
                     reminderCoordinator.reschedule(id)
@@ -329,7 +335,7 @@ class TimetableViewModelFactory(
     private val reminderCoordinator: ReminderCoordinator,
     private val selection: TimetableSelectionStore,
     private val displaySettings: TimetableDisplaySettingsStore,
-    private val remote: ScutScheduleRepository,
+    private val remote: SchoolScheduleRouter,
     private val jsonTimetableStore: com.example.awake.data.repository.JsonTimetableStore
 ) : androidx.lifecycle.ViewModelProvider.Factory {
     override fun <T : ViewModel> create(modelClass: Class<T>): T =

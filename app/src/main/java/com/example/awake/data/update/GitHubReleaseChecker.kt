@@ -50,7 +50,7 @@ class GitHubReleaseChecker(
     }
 
     companion object {
-        const val DEFAULT_REPO = "yeguoyy/awake"
+        const val DEFAULT_REPO = "SCUT-HJM/awake"
 
         private val METADATA_LINE = Regex("""^\s*(versionName|versionCode|apk-sha256)\s*[:：]""")
         private val VERSION_NAME_LINE = Regex("""(?m)^\s*versionName\s*[:：]\s*(\S+)""")

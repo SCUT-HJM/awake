@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -67,6 +68,9 @@ fun CourseCard(course: CourseSlotEntity, onClick: () -> Unit, modifier: Modifier
 fun WeekGridCourseCard(
     course: CourseSlotEntity,
     rowHeight: Dp,
+    periodHeights: List<Dp>,
+    periodOffsets: List<Dp>,
+    gridContentHeight: Dp,
     columnWidth: Dp,
     laneIndex: Int = 0,
     laneCount: Int = 1,
@@ -79,7 +83,7 @@ fun WeekGridCourseCard(
 ) {
     val resolvedPalette = palette ?: paletteForAccent(course.color, LocalDarkTheme.current)
     val span = (course.endPeriod - course.startPeriod + 1).coerceAtLeast(1)
-    val height = heightForCourse(rowHeight, span)
+    val height = heightForCourse(course, periodHeights, rowHeight, span)
     val accent = resolvedPalette.accent
     val background = resolvedPalette.background
     val safeLaneCount = laneCount.coerceAtLeast(1)
@@ -90,12 +94,15 @@ fun WeekGridCourseCard(
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .height(rowHeight * 11)
+            .height(gridContentHeight)
     ) {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(start = laneStart, top = rowHeight * (course.startPeriod - 1))
+                .padding(
+                    start = laneStart,
+                    top = periodOffsets.getOrElse(course.startPeriod - 1) { rowHeight * (course.startPeriod - 1) }
+                )
         ) {
             Box(
                 modifier = Modifier
@@ -104,8 +111,8 @@ fun WeekGridCourseCard(
                     .height(height)
                     .padding(horizontal = 3.dp, vertical = 2.dp)
                     .background(background, RoundedCornerShape(8.dp))
-                    .border(1.dp, accent.copy(alpha = 0.62f), RoundedCornerShape(8.dp))
                     .clickable(onClick = onClick)
+                    .border(1.dp, accent.copy(alpha = 0.75f), RoundedCornerShape(8.dp))
                     .padding(horizontal = 3.dp, vertical = 4.dp)
                     .semantics {
                         contentDescription = buildString {
@@ -117,6 +124,7 @@ fun WeekGridCourseCard(
                 contentAlignment = Alignment.Center
             ) {
                 Column(
+                    modifier = Modifier.fillMaxSize(),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.Center
                 ) {
@@ -134,8 +142,10 @@ fun WeekGridCourseCard(
                             style = MaterialTheme.typography.labelSmall,
                             fontSize = 9.sp,
                             textAlign = TextAlign.Center,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
+                            maxLines = Int.MAX_VALUE,
+                            softWrap = true,
+                            overflow = TextOverflow.Visible,
+                            modifier = Modifier.padding(top = 1.dp)
                         )
                     }
                     weekParityLabel(course.rawWeekText, currentWeek, totalWeeks)?.let {
@@ -202,8 +212,23 @@ private fun rgbToHsv(color: Int): Triple<Float, Float, Float> {
     return Triple(hue, saturation, max)
 }
 
-private fun heightForCourse(rowHeight: Dp, span: Int): Dp =
-    (rowHeight * span - 5.dp).coerceAtLeast(38.dp)
+private fun heightForCourse(
+    course: CourseSlotEntity,
+    periodHeights: List<Dp>,
+    rowHeight: Dp,
+    span: Int
+): Dp {
+    val start = course.startPeriod
+    val end = course.endPeriod
+    if (start < 1 || end < start || end > periodHeights.size) {
+        return (rowHeight * span - 5.dp).coerceAtLeast(38.dp)
+    }
+    return periodHeights
+        .subList(start - 1, end)
+        .reduce { acc, height -> acc + height }
+        .minus(5.dp)
+        .coerceAtLeast(28.dp)
+}
 
 /**
  * 只在当前周落入带单双周标记的那一段时显示标签。

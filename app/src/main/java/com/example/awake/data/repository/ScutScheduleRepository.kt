@@ -16,7 +16,7 @@ class ScutScheduleRepository(
     private val client: ScutJwClient,
     private val mapper: ScutScheduleMapper = ScutScheduleMapper(),
     private val adapters: SchoolAdapterRegistry = SchoolAdapterRegistry()
-) {
+) : SchoolScheduleProvider {
     /** 同一课表的同步请求单飞，避免并发刷新互相覆盖；不同学期可以并行导入。 */
     private val importLocks = ConcurrentHashMap<Long, Mutex>()
 
@@ -24,18 +24,18 @@ class ScutScheduleRepository(
      * 读取教务查询页真实提供的学年/学期选项。
      * 该操作只读取页面，不创建或修改本地课表。
      */
-    suspend fun academicTerms(): List<RemoteAcademicYear> = client.fetchAcademicTerms()
+    override suspend fun academicTerms(): List<RemoteAcademicYear> = client.fetchAcademicTerms()
 
     /** 检查已经保存的直连/VPN会话，不读取或暴露 Cookie 内容。 */
-    suspend fun probeSessions(): List<SessionAvailability> = client.probeSessions()
+    override suspend fun probeSessions(): List<SessionAvailability> = client.probeSessions()
 
     /** 登录后先预览真实返回的课程，不创建本地课表，也不写入数据库。 */
-    suspend fun preview(xnm: Int, xqm: String): ScutSchedulePayload {
+    override suspend fun preview(xnm: Int, xqm: String): ScutSchedulePayload {
         adapters.require("SCUT", xnm, xqm)
         return client.fetchSchedule(xnm, xqm)
     }
 
-    suspend fun import(timetableId: Long, selectedRemoteKeys: Set<String>? = null): List<ParseWarning> {
+    override suspend fun import(timetableId: Long, selectedRemoteKeys: Set<String>?): List<ParseWarning> {
         val lock = importLocks.getOrPut(timetableId) { Mutex() }
         return lock.withLock {
             val timetable = local.getTimetable(timetableId)

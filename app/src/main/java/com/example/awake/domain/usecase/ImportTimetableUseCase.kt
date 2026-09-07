@@ -2,7 +2,7 @@ package com.example.awake.domain.usecase
 
 import com.example.awake.data.local.TimetableEntity
 import com.example.awake.data.repository.LocalTimetableRepository
-import com.example.awake.data.repository.ScutScheduleRepository
+import com.example.awake.data.repository.SchoolScheduleRouter
 import com.example.awake.domain.model.ParseWarning
 
  data class ImportTimetableResult(
@@ -26,7 +26,7 @@ enum class ExistingTimetablePolicy {
  */
 class ImportTimetableUseCase(
     private val local: LocalTimetableRepository,
-    private val remote: ScutScheduleRepository
+    private val remote: SchoolScheduleRouter
 ) {
     suspend operator fun invoke(
         profileId: Long,
@@ -35,7 +35,9 @@ class ImportTimetableUseCase(
         label: String,
         policy: ExistingTimetablePolicy = ExistingTimetablePolicy.CREATE_NEW,
         selectedRemoteKeys: Set<String>? = null,
-        overrideTargetId: Long? = null
+        overrideTargetId: Long? = null,
+        school: com.example.awake.domain.model.SchoolCode = com.example.awake.domain.model.SchoolCode.SCUT,
+        campusCode: String = ""
     ): ImportTimetableResult {
         require(xnm > 0) { "学年起始年无效" }
         require(xqm.isNotBlank()) { "学期码不能为空" }
@@ -51,15 +53,15 @@ class ImportTimetableUseCase(
             val target = local.getTimetableOrNull(overrideTarget) ?: error("要覆盖的课表不存在")
             originalMeta = target
             // 覆盖当前课表：学期标识、名称更新为本次导入内容，再按该课表执行同步替换。
-            timetable = target.copy(xnm = xnm, xqm = xqm, label = label).also {
+            timetable = target.copy(xnm = xnm, xqm = xqm, label = label, schoolCode = school.code, campusCode = campusCode).also {
                 local.updateTimetable(it)
             }
         } else {
             timetable = when (policy) {
                 ExistingTimetablePolicy.OVERWRITE ->
-                    existing ?: local.createTimetable(profileId, xnm, xqm, label)
+                    existing ?: local.createTimetable(profileId, xnm, xqm, label, school.code, campusCode)
                 ExistingTimetablePolicy.CREATE_NEW ->
-                    local.createTimetable(profileId, xnm, xqm, newLabel(local, profileId, label))
+                    local.createTimetable(profileId, xnm, xqm, newLabel(local, profileId, label), school.code, campusCode)
             }
             createdForThisImport = policy == ExistingTimetablePolicy.CREATE_NEW || existing == null
         }

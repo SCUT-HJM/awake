@@ -15,9 +15,11 @@ import com.example.awake.domain.usecase.RefreshTimetableUseCase
 import com.example.awake.ui.auth.AuthScreen
 import com.example.awake.ui.auth.AuthViewModel
 import com.example.awake.ui.auth.AuthViewModelFactory
+import com.example.awake.ui.auth.JnuLoginScreen
 import com.example.awake.ui.importterm.TermImportScreen
 import com.example.awake.ui.importterm.TermImportViewModel
 import com.example.awake.ui.importterm.TermImportViewModelFactory
+import com.example.awake.ui.school.SchoolPickerScreen
 import com.example.awake.ui.settings.SettingsScreen
 import com.example.awake.ui.timetable.CourseDetailScreen
 import com.example.awake.ui.timetable.CourseDetailViewModel
@@ -33,12 +35,12 @@ import com.example.awake.ui.timetable.TimetableViewModelFactory
 fun AppNavHost(container: AppContainer) {
     val navController = rememberNavController()
     val observe = ObserveTimetableUseCase(container.localRepository)
-    val refresh = RefreshTimetableUseCase(container.scutRepository)
-    val importer = ImportTimetableUseCase(container.localRepository, container.scutRepository)
+    val refresh = RefreshTimetableUseCase(container.scheduleRouter)
+    val importer = ImportTimetableUseCase(container.localRepository, container.scheduleRouter)
     val login = LoginUseCase(container.authRepository, container.localRepository)
     val timetableVm: TimetableViewModel = viewModel(factory = TimetableViewModelFactory(
         observe, refresh, container.localRepository, container.reminderCoordinator,
-        container.timetableSelectionStore, container.timetableDisplaySettingsStore, container.scutRepository,
+        container.timetableSelectionStore, container.timetableDisplaySettingsStore, container.scheduleRouter,
         container.jsonTimetableStore
     ))
     NavHost(navController = navController, startDestination = Routes.TIMETABLE) {
@@ -46,9 +48,10 @@ fun AppNavHost(container: AppContainer) {
             TimetableScreen(
                 viewModel = timetableVm,
                 auth = container.authRepository,
-                onLogin = { navController.navigate(Routes.LOGIN) },
-                onImportAdd = { navController.navigate(Routes.termImport("add")) },
-                onImportOverwrite = { navController.navigate(Routes.termImport("overwrite")) },
+                jnuAuth = container.jnuAuthRepository,
+                onLogin = { school -> navController.navigate(Routes.login(school, "timetable")) },
+                onImportAdd = { navController.navigate(Routes.schoolPicker("add")) },
+                onImportOverwrite = { navController.navigate(Routes.schoolPicker("overwrite")) },
                 onSettings = { navController.navigate(Routes.SETTINGS) },
                 onCourse = { navController.navigate(Routes.courseDetail(it)) },
                 onAddCourse = { timetableId, dayOfWeek, startPeriod ->
@@ -56,17 +59,57 @@ fun AppNavHost(container: AppContainer) {
                 }
             )
         }
-        composable(Routes.LOGIN) {
-            val vm: AuthViewModel = viewModel(factory = AuthViewModelFactory(login, container.academicTermsCache))
-            AuthScreen(vm, {
-                navController.navigate(Routes.termImport("add")) { popUpTo(Routes.LOGIN) { inclusive = true } }
-            }, navController::navigateUp)
+        composable(
+            Routes.LOGIN,
+            arguments = listOf(
+                navArgument("school") { type = NavType.StringType; defaultValue = "SCUT" },
+                navArgument("returnTo") { type = NavType.StringType; defaultValue = "import" }
+            )
+        ) { entry ->
+            val school = entry.arguments?.getString("school") ?: "SCUT"
+            val returnTo = entry.arguments?.getString("returnTo") ?: "import"
+            val onLoginSuccess: () -> Unit = {
+                if (returnTo == "timetable") {
+                    navController.popBackStack(Routes.TIMETABLE, false)
+                } else {
+                    navController.navigate(Routes.termImport("add", school)) { popUpTo(Routes.LOGIN) { inclusive = true } }
+                }
+            }
+            if (school == "JNU") {
+                JnuLoginScreen(
+                    auth = container.jnuAuthRepository,
+                    onAuthenticated = onLoginSuccess,
+                    onBack = navController::navigateUp
+                )
+            } else {
+                val vm: AuthViewModel = viewModel(factory = AuthViewModelFactory(login, container.academicTermsCache))
+                AuthScreen(vm, onLoginSuccess, navController::navigateUp)
+            }
         }
         composable(
-            Routes.TERM_IMPORT,
+            Routes.SCHOOL_PICKER,
             arguments = listOf(navArgument("mode") { type = NavType.StringType; defaultValue = "add" })
         ) { entry ->
             val mode = entry.arguments?.getString("mode") ?: "add"
+            SchoolPickerScreen(
+                onBack = navController::navigateUp,
+                onSchoolSelected = { school ->
+                    navController.navigate(Routes.termImport(mode, school))
+                }
+            )
+        }
+
+        composable(
+            Routes.TERM_IMPORT,
+            arguments = listOf(
+                navArgument("mode") { type = NavType.StringType; defaultValue = "add" },
+                navArgument("school") { type = NavType.StringType; defaultValue = "SCUT" }
+            )
+        ) { entry ->
+            val mode = entry.arguments?.getString("mode") ?: "add"
+            val school = entry.arguments?.getString("school") ?: "SCUT"
+            val initialSchool = if (school == "JNU") com.example.awake.domain.model.SchoolCode.JNU
+            else com.example.awake.domain.model.SchoolCode.SCUT
             val importMode = if (mode == "overwrite") com.example.awake.ui.importterm.ImportMode.OVERWRITE
             else com.example.awake.ui.importterm.ImportMode.ADD
             val vm: TermImportViewModel = viewModel(
@@ -75,32 +118,36 @@ fun AppNavHost(container: AppContainer) {
                     importer,
                     container.reminderCoordinator,
                     container.timetableSelectionStore,
-                    container.scutRepository,
+                    container.scheduleRouter,
                     container.academicTermsCache,
                     container.authRepository,
+                    container.jnuAuthRepository,
                     importMode,
-                    container.jsonTimetableStore
+                    container.jsonTimetableStore,
+                    initialSchool
                 )
             )
             TermImportScreen(
                 vm,
                 navController::navigateUp,
                 onDone = { navController.popBackStack(Routes.TIMETABLE, false) },
-                onLogin = { navController.navigate(Routes.LOGIN) }
+                onLogin = { school -> navController.navigate(Routes.login(school)) },
+                onSwitchSchool = { navController.popBackStack() }
             )
         }
         composable(Routes.SETTINGS) {
             SettingsScreen(
                 local = container.localRepository,
                 auth = container.authRepository,
+                jnuAuth = container.jnuAuthRepository,
                 reminderCoordinator = container.reminderCoordinator,
                 selection = container.timetableSelectionStore,
                 displaySettings = container.timetableDisplaySettingsStore,
-                remote = container.scutClient,
+                scheduleRouter = container.scheduleRouter,
                 themeMode = container.themeModeFlow,
                 onThemeModeChange = container::setThemeMode,
                 onBack = { navController.popBackStack() },
-                onLogin = { navController.navigate(Routes.LOGIN) }
+                onLogin = { school -> navController.navigate(Routes.login(school, "timetable")) }
             )
         }
         composable(Routes.COURSE_DETAIL, arguments = listOf(navArgument("courseId") { type = NavType.LongType })) { entry ->
@@ -152,4 +199,3 @@ fun AppNavHost(container: AppContainer) {
         }
     }
 }
-

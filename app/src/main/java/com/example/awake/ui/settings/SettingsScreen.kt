@@ -10,6 +10,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.ui.draw.alpha
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -20,23 +21,31 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.filled.DeleteForever
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -58,21 +67,27 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.core.content.ContextCompat
+import com.example.awake.data.local.PeriodConfigDefaults
 import com.example.awake.data.local.PeriodConfigEntity
+import com.example.awake.data.local.PeriodConfigScopes
+import com.example.awake.data.local.PeriodConfigTarget
 import com.example.awake.data.notification.NotificationChannels
 import com.example.awake.data.remote.ScutAuthRepository
 import com.example.awake.data.remote.ScutAccessMode
-import com.example.awake.data.remote.ScutJwClient
+import com.example.awake.data.repository.SchoolScheduleRouter
+import com.example.awake.data.remote.JnuAuthRepository
 import com.example.awake.data.remote.SessionAvailability
 import com.example.awake.data.remote.SessionAvailabilityState
 import com.example.awake.data.repository.LocalTimetableRepository
 import com.example.awake.data.repository.ReminderCoordinator
 import com.example.awake.data.repository.ReminderSettingsStore
+import com.example.awake.domain.model.SchoolCode
 import com.example.awake.data.repository.TimetableSelectionStore
 import com.example.awake.data.repository.TimetableDisplaySettingsStore
 import com.example.awake.data.update.ApkUpdateSupport
@@ -90,14 +105,15 @@ import kotlinx.coroutines.withContext
 fun SettingsScreen(
     local: LocalTimetableRepository,
     auth: ScutAuthRepository,
+    jnuAuth: JnuAuthRepository,
     reminderCoordinator: ReminderCoordinator,
     selection: TimetableSelectionStore,
     displaySettings: TimetableDisplaySettingsStore,
-    remote: ScutJwClient,
+    scheduleRouter: SchoolScheduleRouter,
     themeMode: StateFlow<ThemeMode>,
     onThemeModeChange: (ThemeMode) -> Unit,
     onBack: () -> Unit,
-    onLogin: () -> Unit
+    onLogin: (String) -> Unit
 ) {
     val context = LocalContext.current
     val activity = context as? Activity
@@ -106,10 +122,17 @@ fun SettingsScreen(
     var reminderEnabled by remember { mutableStateOf(initial.enabled) }
     var minutesBefore by remember { mutableStateOf(initial.minutesBefore) }
     var periodConfigs by remember { mutableStateOf<List<PeriodConfigEntity>>(emptyList()) }
-    // 节次时间跟随当前选中课表：0 表示全局默认（该课表还没有独立配置时读写全局值）。
-    var periodTimetableId by remember { mutableStateOf(0L) }
+    var savedPeriodConfigs by remember { mutableStateOf<List<PeriodConfigEntity>>(emptyList()) }
+    var deleteTargetPeriod by remember { mutableStateOf<Int?>(null) }
+    // 学校/校区级上课时间；暨大区分本部和番禺。
+    var periodTarget by remember { mutableStateOf(PeriodConfigTarget.SCUT) }
+    var periodPage by remember { mutableStateOf(PeriodTimePage.LIST) }
+    var currentTimetableTarget by remember { mutableStateOf<PeriodConfigTarget?>(null) }
+    var selectedTimetableId by remember { mutableStateOf<Long?>(null) }
+    var periodCountsByTarget by remember { mutableStateOf<Map<PeriodConfigTarget, Int>>(emptyMap()) }
     var status by remember { mutableStateOf<String?>(null) }
-    var sessionStates by remember { mutableStateOf<Map<ScutAccessMode, SessionAvailability>>(emptyMap()) }
+    var selectedSessionSchool by remember { mutableStateOf(SchoolCode.SCUT) }
+    var sessionStates by remember { mutableStateOf<Map<SchoolCode, List<SessionAvailability>>>(emptyMap()) }
     var checkingSessions by remember { mutableStateOf(false) }
     var showClearDataDialog by remember { mutableStateOf(false) }
     // 更新检测：通过 GitHub Releases API 检查，纯手动触发，不自动轮询。
@@ -133,12 +156,18 @@ fun SettingsScreen(
         } else {
             packageInfo?.versionCode ?: 0
         }
-        val timetableId = withContext(Dispatchers.IO) {
-            selection.read() ?: local.getFirstTimetable()?.id
-        }
-        periodTimetableId = timetableId ?: 0L
-        periodConfigs = withContext(Dispatchers.IO) { local.getPeriodConfigsFor(periodTimetableId) }
     }
+
+    LaunchedEffect(periodTarget) {
+        val loaded = withContext(Dispatchers.IO) {
+            local.getPeriodConfigsForTarget(periodTarget)
+        }
+        periodConfigs = loaded
+        // 记录进入编辑页时的基准；未保存返回时用它恢复，避免列表被清空。
+        savedPeriodConfigs = loaded
+        deleteTargetPeriod = null
+    }
+
     val scope = rememberCoroutineScope()
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -179,17 +208,66 @@ fun SettingsScreen(
     val periodsPerScreen by displaySettings.periodsPerScreen.collectAsStateWithLifecycle()
     val currentThemeMode by themeMode.collectAsStateWithLifecycle()
 
-    fun checkSessions() {
+    fun selectPeriodTarget(target: PeriodConfigTarget) {
+        val timetableId = selectedTimetableId
+        if (timetableId == null) {
+            status = "请先选择或导入课表"
+            return
+        }
+        scope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    val timetable = local.getTimetableOrNull(timetableId)
+                        ?: error("当前课表不存在")
+                    // 套用时间方案时移除课表独立配置，避免旧配置继续覆盖所选方案。
+                    local.deletePeriodConfigsFor(timetableId)
+                    local.updateTimetable(
+                        timetable.copy(periodTargetCode = target.name)
+                    )
+                }
+                withContext(Dispatchers.IO) { reminderCoordinator.rescheduleSelected() }
+                currentTimetableTarget = target
+                status = "已使用${target.displayName}上课时间"
+            }.onFailure { error ->
+                status = error.message ?: "切换上课时间失败"
+            }
+        }
+    }
+
+    LaunchedEffect(section) {
+        if (section == SettingsSection.PERIODS) {
+            val timetableId = withContext(Dispatchers.IO) {
+                selection.read() ?: local.getFirstTimetable()?.id
+            }
+            selectedTimetableId = timetableId
+            val timetable = timetableId?.let { id ->
+                withContext(Dispatchers.IO) { local.getTimetableOrNull(id) }
+            }
+            currentTimetableTarget = timetable?.let {
+                PeriodConfigScopes.targetFor(
+                    it.schoolCode,
+                    it.campusCode,
+                    it.periodTargetCode
+                )
+            }
+            periodCountsByTarget = withContext(Dispatchers.IO) {
+                PeriodConfigScopes.supportedTargets.associateWith { target ->
+                    local.getPeriodConfigsForTarget(target).size
+                }
+            }
+        }
+    }
+
+    fun checkSessions(school: SchoolCode = selectedSessionSchool) {
         if (checkingSessions) return
+        selectedSessionSchool = school
         scope.launch {
             checkingSessions = true
-            sessionStates = ScutAccessMode.values().associateWith {
-                SessionAvailability(it, SessionAvailabilityState.NOT_CONFIGURED)
-            }
+            sessionStates = sessionStates + (school to emptyList())
             val results = withContext(Dispatchers.IO) {
-                ScutAccessMode.values().associateWith { mode -> remote.probeSession(mode) }
+                scheduleRouter.probeSessions(school)
             }
-            sessionStates = results
+            sessionStates = sessionStates + (school to results)
             checkingSessions = false
         }
     }
@@ -210,7 +288,7 @@ fun SettingsScreen(
                     }
                 }
                 .onFailure { error ->
-                    updateStatus = "检查失败：${error.message ?: "网络异常"}。可手动访问 github.com/yeguoyy/awake/releases"
+                    updateStatus = "检查失败：${error.message ?: "网络异常"}。可手动访问 github.com/SCUT-HJM/awake/releases"
                 }
             updateChecking = false
         }
@@ -269,14 +347,73 @@ fun SettingsScreen(
         if (section == SettingsSection.ACCOUNT) checkSessions()
     }
 
+    fun addPeriod() {
+        val nextPeriod = (periodConfigs.maxOfOrNull { it.period } ?: 0) + 1
+        periodConfigs = (periodConfigs + PeriodConfigEntity(period = nextPeriod, startTime = "08:00", endTime = "08:45"))
+            .sortedBy { it.period }
+    }
+
+    fun removePeriod(period: Int) {
+        periodConfigs = periodConfigs
+            .filterNot { it.period == period }
+            .sortedBy { it.period }
+            .mapIndexed { index, config ->
+                config.copy(period = index + 1)
+            }
+        deleteTargetPeriod = null
+    }
+
+    fun savePeriods() {
+        scope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    local.savePeriodConfigs(
+                        periodTarget.scope,
+                        periodConfigs
+                    )
+                }
+            }.onSuccess {
+                withContext(Dispatchers.IO) { reminderCoordinator.rescheduleSelected() }
+                savedPeriodConfigs = periodConfigs
+                periodCountsByTarget = periodCountsByTarget + (periodTarget to periodConfigs.size)
+                status = "${periodTarget.displayName}上课时间已保存"
+            }.onFailure { error ->
+                status = error.message ?: "上课时间保存失败"
+            }
+        }
+    }
+
     Scaffold(topBar = {
         CenterAlignedTopAppBar(
-            title = { Text(section.title) },
+            title = {
+                Text(
+                    when {
+                        section == SettingsSection.PERIODS && periodPage == PeriodTimePage.EDIT -> "编辑上课时间"
+                        else -> section.title
+                    }
+                )
+            },
             navigationIcon = {
                 IconButton(onClick = {
-                    if (section == SettingsSection.OVERVIEW) onBack() else section = SettingsSection.OVERVIEW
+                    when {
+                        section == SettingsSection.OVERVIEW -> onBack()
+                        section == SettingsSection.PERIODS && periodPage == PeriodTimePage.EDIT -> {
+                            periodConfigs = savedPeriodConfigs
+                            deleteTargetPeriod = null
+                            periodPage = PeriodTimePage.LIST
+                        }
+                        else -> section = SettingsSection.OVERVIEW
+                    }
                 }) {
                     Icon(Icons.Default.ArrowBack, contentDescription = "返回")
+                }
+            },
+            actions = {
+                if (section == SettingsSection.PERIODS && periodPage == PeriodTimePage.EDIT) {
+                    IconButton(onClick = ::addPeriod) {
+                        Icon(Icons.Default.Add, contentDescription = "添加节次")
+                    }
+                    TextButton(onClick = ::savePeriods) { Text("保存") }
                 }
             }
         )
@@ -285,6 +422,16 @@ fun SettingsScreen(
             modifier = Modifier
                 .padding(padding)
                 .padding(horizontal = 16.dp, vertical = 12.dp)
+                .pointerInput(section, periodPage) {
+                    detectTapGestures(onTap = {
+                        if (
+                            section == SettingsSection.PERIODS &&
+                            periodPage == PeriodTimePage.EDIT
+                        ) {
+                            deleteTargetPeriod = null
+                        }
+                    })
+                }
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
@@ -298,8 +445,8 @@ fun SettingsScreen(
                         onClick = { section = SettingsSection.REMINDERS }
                     )
                     SettingsOption(
-                        title = "节次时间",
-                        subtitle = if (periodConfigs.isEmpty()) "正在读取节次配置…" else "${periodConfigs.size} 个时间段 · 可自行调整",
+                        title = "上课时间",
+                        subtitle = "按学校/校区分别设置 · 华南理工 / 暨南大学",
                         onClick = { section = SettingsSection.PERIODS }
                     )
                     SettingsOption(
@@ -323,7 +470,7 @@ fun SettingsScreen(
                     )
                     Text("教务账号和数据", style = MaterialTheme.typography.titleMedium)
                     SettingsOption(
-                        title = "账号与本地数据",
+                        title = "会话与本地数据",
                         subtitle = "重新登录、退出登录或清除本地数据",
                         onClick = { section = SettingsSection.ACCOUNT }
                     )
@@ -388,60 +535,224 @@ fun SettingsScreen(
                 }
 
                 SettingsSection.PERIODS -> {
-                    Text("节次时间", style = MaterialTheme.typography.titleLarge)
-                    Text(
-                        "时间会显示在课表左侧节次栏，也用于提醒和日历导出。配置随当前课表独立保存，请使用 HH:mm 格式。",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    periodConfigs.forEach { config ->
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            Text(config.period.toString().padStart(2, '0'), modifier = Modifier.padding(end = 2.dp))
-                            OutlinedTextField(
-                                value = config.startTime,
-                                onValueChange = { value ->
-                                    periodConfigs = periodConfigs.map {
-                                        if (it.period == config.period) it.copy(startTime = value.take(5)) else it
+                    if (periodPage == PeriodTimePage.LIST) {
+                        Text(
+                            "点击选择当前课表使用的时间；点击右侧铅笔编辑时间。",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        PeriodConfigScopes.supportedTargets.forEach { target ->
+                            val isCurrent = currentTimetableTarget == target
+                            Surface(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { selectPeriodTarget(target) },
+                                shape = RoundedCornerShape(20.dp),
+                                color = if (isCurrent) {
+                                    MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.36f)
+                                } else {
+                                    MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.48f)
+                                }
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 18.dp, vertical = 16.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(target.displayName, style = MaterialTheme.typography.titleMedium)
+                                        Text(
+                                            "${periodCountsByTarget[target] ?: target.defaultPeriodCount} 节课（含放空节次）",
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                        Text(
+                                            if (isCurrent) "当前课表在用" else "点击使用",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = if (isCurrent) {
+                                                MaterialTheme.colorScheme.primary
+                                            } else {
+                                                MaterialTheme.colorScheme.onSurfaceVariant
+                                            }
+                                        )
                                     }
-                                },
-                                label = { Text("开始") },
-                                singleLine = true,
-                                modifier = Modifier.weight(1f)
-                            )
-                            OutlinedTextField(
-                                value = config.endTime,
-                                onValueChange = { value ->
-                                    periodConfigs = periodConfigs.map {
-                                        if (it.period == config.period) it.copy(endTime = value.take(5)) else it
+                                    RadioButton(selected = isCurrent, onClick = null)
+                                    IconButton(onClick = {
+                                        savedPeriodConfigs = periodConfigs
+                                        periodTarget = target
+                                        periodPage = PeriodTimePage.EDIT
+                                        deleteTargetPeriod = null
+                                    }) {
+                                        Icon(
+                                            Icons.Default.Edit,
+                                            contentDescription = "编辑"
+                                        )
                                     }
-                                },
-                                label = { Text("结束") },
-                                singleLine = true,
-                                modifier = Modifier.weight(1f)
-                            )
-                        }
-                    }
-                    Button(
-                        onClick = {
-                            scope.launch {
-                                runCatching {
-                                    withContext(Dispatchers.IO) {
-                                        local.savePeriodConfigs(periodTimetableId, periodConfigs)
-                                    }
-                                }.onSuccess {
-                                    withContext(Dispatchers.IO) { reminderCoordinator.rescheduleSelected() }
-                                    status = "节次时间已保存"
-                                }.onFailure { error ->
-                                    status = error.message ?: "节次时间保存失败"
                                 }
                             }
-                        },
-                        enabled = periodConfigs.isNotEmpty(),
-                        modifier = Modifier.fillMaxWidth()
-                    ) { Text("保存节次时间") }
+                        }
+                    } else {
+                        Surface(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(20.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.48f)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 18.dp, vertical = 16.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text("上课时间名称", modifier = Modifier.weight(1f))
+                                Text(periodTarget.displayName, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+
+                        Text(
+                            "请注意是 24 小时制！",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+
+                        Surface(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(20.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.42f)
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
+                                verticalArrangement = Arrangement.spacedBy(2.dp)
+                            ) {
+                                periodConfigs.forEachIndexed { index, config ->
+                                    Column(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(vertical = 8.dp)
+                                            .alpha(if (config.isEmpty) 0.55f else 1f),
+                                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                        ) {
+                                            if (deleteTargetPeriod == config.period) {
+                                                Icon(
+                                                    Icons.Default.Close,
+                                                    contentDescription = "删除",
+                                                    tint = MaterialTheme.colorScheme.error,
+                                                    modifier = Modifier
+                                                        .clickable { removePeriod(config.period) }
+                                                        .padding(end = 4.dp)
+                                                )
+                                            }
+                                            Text(
+                                                "第${config.period}节课",
+                                                modifier = Modifier
+                                                    .weight(1f)
+                                                    .pointerInput(config.period) {
+                                                        detectTapGestures(
+                                                            onLongPress = {
+                                                                deleteTargetPeriod =
+                                                                    if (deleteTargetPeriod == config.period) null else config.period
+                                                            }
+                                                        )
+                                                    }
+                                            )
+                                        }
+                                        if (config.isEmpty) {
+                                            OutlinedTextField(
+                                                value = config.customLabel,
+                                                onValueChange = { value ->
+                                                    periodConfigs = periodConfigs.map {
+                                                        if (it.period == config.period) {
+                                                            it.copy(customLabel = value.take(10))
+                                                        } else it
+                                                    }
+                                                },
+                                                label = { Text(config.emptyLabel) },
+                                                placeholder = { Text("留空使用默认名称") },
+                                                singleLine = true,
+                                                modifier = Modifier.fillMaxWidth()
+                                            )
+                                        } else {
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                            ) {
+                                                OutlinedTextField(
+                                                    value = config.startTime,
+                                                    onValueChange = { value ->
+                                                        periodConfigs = periodConfigs.map {
+                                                            if (it.period == config.period) {
+                                                                it.copy(startTime = value.take(5))
+                                                            } else it
+                                                        }
+                                                    },
+                                                    label = { Text("开始") },
+                                                    singleLine = true,
+                                                    modifier = Modifier.weight(1f)
+                                                )
+                                                Text("—")
+                                                OutlinedTextField(
+                                                    value = config.endTime,
+                                                    onValueChange = { value ->
+                                                        periodConfigs = periodConfigs.map {
+                                                            if (it.period == config.period) {
+                                                                it.copy(endTime = value.take(5))
+                                                            } else it
+                                                        }
+                                                    },
+                                                    label = { Text("结束") },
+                                                    singleLine = true,
+                                                    modifier = Modifier.weight(1f)
+                                                )
+                                            }
+                                        }
+                                        if (deleteTargetPeriod == config.period) {
+                                            Row(
+                                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                            ) {
+                                                FilterChip(
+                                                    selected = config.emptyType == PeriodConfigEntity.EMPTY_LUNCH,
+                                                    onClick = {
+                                                        periodConfigs = periodConfigs.map {
+                                                            if (it.period == config.period) {
+                                                                it.copy(
+                                                                    emptyType = if (it.emptyType == PeriodConfigEntity.EMPTY_LUNCH) {
+                                                                        PeriodConfigEntity.EMPTY_NONE
+                                                                    } else {
+                                                                        PeriodConfigEntity.EMPTY_LUNCH
+                                                                    }
+                                                                )
+                                                            } else it
+                                                        }
+                                                    },
+                                                    label = { Text("午休") }
+                                                )
+                                                FilterChip(
+                                                    selected = config.emptyType == PeriodConfigEntity.EMPTY_EVENING,
+                                                    onClick = {
+                                                        periodConfigs = periodConfigs.map {
+                                                            if (it.period == config.period) {
+                                                                it.copy(
+                                                                    emptyType = if (it.emptyType == PeriodConfigEntity.EMPTY_EVENING) {
+                                                                        PeriodConfigEntity.EMPTY_NONE
+                                                                    } else {
+                                                                        PeriodConfigEntity.EMPTY_EVENING
+                                                                    }
+                                                                )
+                                                            } else it
+                                                        }
+                                                    },
+                                                    label = { Text("晚休") }
+                                                )
+                                            }
+                                        }
+                                    }
+                                    if (index != periodConfigs.lastIndex) {
+                                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
 
                 SettingsSection.DISPLAY -> {
@@ -524,14 +835,20 @@ fun SettingsScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     SessionStatusCard(
-                        states = sessionStates,
+                        selectedSchool = selectedSessionSchool,
+                        schoolResults = sessionStates,
                         checking = checkingSessions,
-                        onRefresh = ::checkSessions
+                        onSchoolChange = ::checkSessions,
+                        onRefresh = { checkSessions(selectedSessionSchool) }
                     )
                     Text("登录操作", style = MaterialTheme.typography.titleMedium)
-                    Button(onClick = onLogin, modifier = Modifier.fillMaxWidth()) { Text("重新登录官方 CAS") }
+                    Button(onClick = { onLogin(selectedSessionSchool.code) }, modifier = Modifier.fillMaxWidth()) { Text(if (selectedSessionSchool == SchoolCode.JNU) "重新登录暨南大学官方页面" else "重新登录官方 CAS") }
                     OutlinedButton(
-                        onClick = { auth.logout(); sessionStates = emptyMap(); status = "已退出登录，本地课表仍保留" },
+                        onClick = {
+                            if (selectedSessionSchool == SchoolCode.JNU) jnuAuth.logout() else auth.logout()
+                            sessionStates = sessionStates + (selectedSessionSchool to emptyList())
+                            status = "${selectedSessionSchool.displayName}已退出登录，本地课表仍保留"
+                        },
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Text("退出登录（保留本地课表）")
@@ -553,7 +870,7 @@ fun SettingsScreen(
                 SettingsSection.UPDATE -> {
                     Text("检查更新", style = MaterialTheme.typography.titleLarge)
                     Text(
-                        "通过 GitHub Releases 检测最新版本（仓库：yeguoyy/awake）。国内网络访问 GitHub 可能不稳定，检查失败时可手动到 Releases 页面查看。",
+                        "通过 GitHub Releases 检测最新版本（仓库：SCUT-HJM/awake）。国内网络访问 GitHub 可能不稳定，检查失败时可手动到 Releases 页面查看。",
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Card(
@@ -602,7 +919,7 @@ fun SettingsScreen(
                             }
                         }
                     }
-                    TextButton(onClick = { openInBrowser("https://github.com/yeguoyy/awake/releases") }) {
+                    TextButton(onClick = { openInBrowser("https://github.com/SCUT-HJM/awake/releases") }) {
                         Text("在浏览器打开 GitHub Releases 页面")
                     }
                 }
@@ -673,11 +990,14 @@ fun SettingsScreen(
 
 @Composable
 private fun SessionStatusCard(
-    states: Map<ScutAccessMode, SessionAvailability>,
+    selectedSchool: SchoolCode,
+    schoolResults: Map<SchoolCode, List<SessionAvailability>>,
     checking: Boolean,
+    onSchoolChange: (SchoolCode) -> Unit,
     onRefresh: () -> Unit
 ) {
-    val canImport = states.values.any { it.state == SessionAvailabilityState.AVAILABLE }
+    val entries = schoolResults[selectedSchool].orEmpty()
+    val canImport = entries.any { it.state == SessionAvailabilityState.AVAILABLE }
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.42f))
@@ -687,9 +1007,9 @@ private fun SessionStatusCard(
                 Column(modifier = Modifier.weight(1f)) {
                     Text("会话状态", style = MaterialTheme.typography.titleMedium)
                     Text(
-                        if (checking) "正在检查直连和 VPN 会话…"
-                        else if (canImport) "至少一种会话可用，可以导入新课表"
-                        else "暂未检测到可用会话，请重新登录",
+                        if (checking) "正在检查${selectedSchool.displayName}会话…"
+                        else if (canImport) "${selectedSchool.displayName}会话可用，可以导入新课表"
+                        else "暂未检测到${selectedSchool.displayName}可用会话，请重新登录",
                         style = MaterialTheme.typography.bodySmall,
                         color = if (canImport) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -698,22 +1018,42 @@ private fun SessionStatusCard(
                     Icon(Icons.Default.Refresh, contentDescription = "重新检查会话")
                 }
             }
-            SessionStatusRow(ScutAccessMode.DIRECT, states[ScutAccessMode.DIRECT], checking)
-            SessionStatusRow(ScutAccessMode.WEB_VPN, states[ScutAccessMode.WEB_VPN], checking)
-            Text(
-                "导入时按直连优先、VPN 备用尝试；任意一种会话成功即可完成导入。",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                SchoolCode.entries.forEach { school ->
+                    FilterChip(
+                        selected = selectedSchool == school,
+                        onClick = { if (selectedSchool != school) onSchoolChange(school) },
+                        enabled = !checking,
+                        label = { Text(school.displayName) }
+                    )
+                }
+            }
+            if (selectedSchool == SchoolCode.JNU) {
+                val availability = entries.firstOrNull()
+                SessionStatusRow(ScutAccessMode.DIRECT, availability, checking, schoolName = selectedSchool.displayName)
+                Text(
+                    "暨南大学使用官方教务系统登录会话；退出登录不影响本地课表。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            } else {
+                SessionStatusRow(ScutAccessMode.DIRECT, entries.firstOrNull { it.accessMode == ScutAccessMode.DIRECT }, checking, schoolName = selectedSchool.displayName)
+                SessionStatusRow(ScutAccessMode.WEB_VPN, entries.firstOrNull { it.accessMode == ScutAccessMode.WEB_VPN }, checking, schoolName = selectedSchool.displayName)
+                Text(
+                    "导入时按直连优先、VPN 备用尝试；任意一种会话成功即可完成导入。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
         }
     }
 }
-
 @Composable
 private fun SessionStatusRow(
     mode: ScutAccessMode,
     availability: SessionAvailability?,
-    checking: Boolean
+    checking: Boolean,
+    schoolName: String = "学校"
 ) {
     val icon = if (mode == ScutAccessMode.DIRECT) Icons.Default.Wifi else Icons.Default.Cloud
     val state = availability?.state
@@ -744,13 +1084,15 @@ private fun SessionStatusRow(
     }
 }
 
+private enum class PeriodTimePage { LIST, EDIT }
+
 private enum class SettingsSection(val title: String) {
     OVERVIEW("设置与隐私"),
     REMINDERS("课前提醒"),
-    PERIODS("节次时间"),
+    PERIODS("上课时间"),
     DISPLAY("课表显示"),
     APPEARANCE("深色模式"),
-    ACCOUNT("账号与本地数据"),
+    ACCOUNT("会话与本地数据"),
     UPDATE("检查更新")
 }
 
@@ -783,8 +1125,3 @@ private fun SettingsOption(
         }
     }
 }
-
-
-
-
-

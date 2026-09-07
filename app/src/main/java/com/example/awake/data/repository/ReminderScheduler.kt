@@ -112,7 +112,7 @@ class ReminderCoordinator(
         val reminders = ReminderPlanner.plan(
             timetable = timetable,
             slots = local.getAllSlots(timetable.id),
-            periodConfigs = local.getPeriodConfigsFor(timetable.id),
+            periodConfigs = local.getPeriodConfigsFor(timetable),
             minutesBefore = reminderSettings.minutesBefore
         )
         scheduler.schedule(reminders)

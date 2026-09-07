@@ -85,7 +85,8 @@ internal fun currentWeekOf(timetable: TimetableEntity?): Int? {
 fun TimetableScreen(
     viewModel: TimetableViewModel,
     auth: com.example.awake.data.remote.ScutAuthRepository,
-    onLogin: () -> Unit,
+    jnuAuth: com.example.awake.data.remote.JnuAuthRepository,
+    onLogin: (String) -> Unit,
     onImportAdd: () -> Unit,
     onImportOverwrite: () -> Unit,
     onSettings: () -> Unit,
@@ -109,8 +110,14 @@ fun TimetableScreen(
     val pendingSyncConfirm by viewModel.pendingSyncConfirm.collectAsStateWithLifecycle()
     // 直连/VPN 登录完成后本地档案名称要等首次导入才会更新，因此登录状态
     // 以进程内教务会话为准，档案名称仅作兜底（进程重启后会话丢失时使用）。
-    val isLoggedIn = auth.isAuthenticated() ||
-        (profile?.displayName?.isNotBlank() == true && profile?.displayName != "未登录")
+    val selectedSchoolCode = selectedTimetable?.schoolCode ?: "SCUT"
+    val isLoggedIn = if (selectedSchoolCode == "JNU") {
+        jnuAuth.isAuthenticated() ||
+            (profile?.displayName?.isNotBlank() == true && profile?.displayName != "未登录")
+    } else {
+        auth.isAuthenticated() ||
+            (profile?.displayName?.isNotBlank() == true && profile?.displayName != "未登录")
+    }
     var showControlSheet by remember { mutableStateOf(false) }
     // 「+」与「创建课表」共用的模式选择弹窗。
     var showImportModeDialog by remember { mutableStateOf(false) }
@@ -181,12 +188,12 @@ fun TimetableScreen(
             if (tables.isEmpty()) {
                 EmptyTimetableState(
                     loggedIn = isLoggedIn,
-                    onLogin = onLogin,
+                    onLogin = { onLogin(selectedSchoolCode) },
                     onImport = onImportAdd,
                     modifier = Modifier.fillMaxSize()
                 )
             } else {
-                SyncBanner(syncState, message, onLogin, viewModel::refresh)
+                SyncBanner(syncState, message, { onLogin(selectedSchoolCode) }, viewModel::refresh)
                 val pageSet = adjacentWeekPages?.takeIf { it.current.week == week }
                 val currentPage = pageSet?.current
                 val previousPage = pageSet?.previous
@@ -220,12 +227,6 @@ fun TimetableScreen(
                     modifier = Modifier
                         .weight(1f)
                         .padding(horizontal = 8.dp)
-                )
-                Text(
-                    "点击课程查看详情 · 点击空白时段添加本地课程",
-                    modifier = Modifier.padding(start = 12.dp, bottom = 8.dp),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         }

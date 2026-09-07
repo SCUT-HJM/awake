@@ -5,4 +5,8 @@
     <domain-config cleartextTrafficPermitted="true">
         <domain includeSubdomains="false">xsjw2018.jw.scut.edu.cn</domain>
     </domain-config>
+    <!-- 暨大登录后部分回跳仍使用 HTTP 首页；仅允许教务域名，其他站点仍禁止明文。 -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">jw.jnu.edu.cn</domain>
+    </domain-config>
 </network-security-config>

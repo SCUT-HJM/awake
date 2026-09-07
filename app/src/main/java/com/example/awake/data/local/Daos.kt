@@ -45,8 +45,8 @@ interface CourseDao {
     @Query("UPDATE courses SET color = :color WHERE id = :id")
     suspend fun updateCourseColor(id: Long, color: Int)
     @Query("DELETE FROM courses WHERE id = :id") suspend fun deleteCourseById(id: Long)
-    @Query("DELETE FROM courses WHERE timetableId = :timetableId AND source IN ('SCUT_KB', 'SCUT_SJK')") suspend fun deleteRemoteForTimetable(timetableId: Long)
-    @Query("SELECT * FROM courses WHERE timetableId = :timetableId AND source IN ('SCUT_KB', 'SCUT_SJK')")
+    @Query("DELETE FROM courses WHERE timetableId = :timetableId AND source NOT IN ('MANUAL', 'MIGRATED_LEGACY')") suspend fun deleteRemoteForTimetable(timetableId: Long)
+    @Query("SELECT * FROM courses WHERE timetableId = :timetableId AND source NOT IN ('MANUAL', 'MIGRATED_LEGACY')")
     suspend fun getRemoteMasters(timetableId: Long): List<CourseEntity>
 
     // ---- 时段扁平行（含课程主记录信息）----
@@ -150,12 +150,12 @@ interface CourseDao {
     @Query(
         "DELETE FROM course_weeks WHERE sectionId IN (" +
             "SELECT s.id FROM course_sections s JOIN courses c ON c.id = s.courseId " +
-            "WHERE c.timetableId = :timetableId AND c.source IN ('SCUT_KB', 'SCUT_SJK'))"
+            "WHERE c.timetableId = :timetableId AND c.source NOT IN ('MANUAL', 'MIGRATED_LEGACY'))"
     )
     suspend fun deleteRemoteWeeks(timetableId: Long)
     @Query(
         "DELETE FROM course_sections WHERE courseId IN (" +
-            "SELECT id FROM courses WHERE timetableId = :timetableId AND source IN ('SCUT_KB', 'SCUT_SJK'))"
+            "SELECT id FROM courses WHERE timetableId = :timetableId AND source NOT IN ('MANUAL', 'MIGRATED_LEGACY'))"
     )
     suspend fun deleteRemoteSections(timetableId: Long)
     @Query("SELECT id FROM timetables") suspend fun getAllTimetableIds(): List<Long>

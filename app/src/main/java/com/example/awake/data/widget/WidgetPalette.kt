@@ -106,6 +106,10 @@ internal object WidgetPalette {
 
     fun textSecondary(dark: Boolean): Int = if (dark) 0xFFCAC4D0.toInt() else 0xFF49454F.toInt()
 
+    /** 放空节次（午休/晚休）底色：与 App 内主界面同源，深色模式使用低调灰。 */
+    fun emptyPeriodBackground(dark: Boolean): Int =
+        if (dark) 0xFF2B2930.toInt() else 0xFFE1E7F5.toInt()
+
     fun chipBackground(dark: Boolean): Int = if (dark) 0xFF2B2930.toInt() else 0xFFFFFFFF.toInt()
 
     fun chipText(dark: Boolean): Int = textPrimary(dark)

@@ -11,7 +11,7 @@ class TimetableDisplaySettingsStore(context: Context) {
         private const val PREFS_NAME = "awake_timetable_display_settings"
         private const val KEY_SHOW_OTHER_WEEKS = "show_other_weeks"
         private const val KEY_PERIODS_PER_SCREEN = "periods_per_screen"
-        const val DEFAULT_PERIODS_PER_SCREEN = 9
+        const val DEFAULT_PERIODS_PER_SCREEN = 11
         const val MIN_PERIODS_PER_SCREEN = 6
         const val MAX_PERIODS_PER_SCREEN = 14
         const val DEFAULT_SHOW_OTHER_WEEKS = true

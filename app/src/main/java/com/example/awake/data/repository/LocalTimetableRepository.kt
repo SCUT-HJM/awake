@@ -8,6 +8,8 @@ import com.example.awake.data.local.CourseSlotEntity
 import com.example.awake.data.local.CourseWeekEntity
 import com.example.awake.data.local.ProfileEntity
 import com.example.awake.data.local.PeriodConfigDefaults
+import com.example.awake.data.local.PeriodConfigScopes
+import com.example.awake.data.local.PeriodConfigTarget
 import com.example.awake.data.local.PeriodConfigEntity
 import com.example.awake.data.local.TimetableEntity
 import com.example.awake.domain.model.CourseIdentity
@@ -24,10 +26,14 @@ class LocalTimetableRepository(private val db: AppDatabase) {
         schoolCode = SchoolCode.SCUT.code, displayName = "未登录"
     ).let { it.copy(id = db.profileDao().insert(it)) }
 
-    suspend fun saveLoggedInProfile(displayName: String?, studentId: String?): ProfileEntity {
+    suspend fun saveLoggedInProfile(
+        displayName: String?,
+        studentId: String?,
+        schoolCode: String = SchoolCode.SCUT.code
+    ): ProfileEntity {
         val existing = db.profileDao().getActive()
         val profile = (existing ?: ProfileEntity()).copy(
-            schoolCode = SchoolCode.SCUT.code,
+            schoolCode = schoolCode,
             displayName = displayName ?: existing?.displayName,
             maskedStudentId = studentId?.maskStudentId() ?: existing?.maskedStudentId,
             lastLoginAt = System.currentTimeMillis()
@@ -51,10 +57,24 @@ class LocalTimetableRepository(private val db: AppDatabase) {
     suspend fun getSlotOrNull(sectionId: Long): CourseSlotEntity? = db.courseDao().getSlot(sectionId)
     suspend fun getSectionOrNull(sectionId: Long): CourseSectionEntity? = db.courseDao().getSectionById(sectionId)
     suspend fun getCourseOrNull(id: Long): CourseEntity? = db.courseDao().getCourse(id)
-    /** 时段设置跟随课表：没有独立配置的课表回退到全局默认（timetableId = 0）。 */
+    /** 时段设置跟随课表：优先课表独立配置，其次学校配置，最后回退全局默认（timetableId = 0）。 */
     suspend fun getPeriodConfigsFor(timetableId: Long): List<PeriodConfigEntity> {
         val custom = db.periodConfigDao().getFor(timetableId)
         return custom.ifEmpty { db.periodConfigDao().getDefaults() }
+    }
+
+    /** 课表没有独立配置时，使用其所属学校的节次配置，保证同一学校的时间统一生效。 */
+    suspend fun getPeriodConfigsFor(timetable: TimetableEntity): List<PeriodConfigEntity> {
+        db.periodConfigDao().getFor(timetable.id).takeIf { it.isNotEmpty() }?.let { return it }
+        val target = PeriodConfigScopes.targetFor(
+            timetable.schoolCode,
+            timetable.campusCode,
+            timetable.periodTargetCode
+        )
+        db.periodConfigDao().getFor(target.scope)
+            .takeIf { it.isNotEmpty() }
+            ?.let { return it }
+        return target.defaultConfigs
     }
 
     fun observePeriodConfigsFor(timetableId: Long): Flow<List<PeriodConfigEntity>> = kotlinx.coroutines.flow.combine(
@@ -62,11 +82,43 @@ class LocalTimetableRepository(private val db: AppDatabase) {
         db.periodConfigDao().observeDefaults()
     ) { custom, defaults -> if (custom.isEmpty()) defaults else custom }
 
+    fun observePeriodConfigsFor(timetable: TimetableEntity): Flow<List<PeriodConfigEntity>> =
+        kotlinx.coroutines.flow.combine(
+            db.periodConfigDao().observeFor(timetable.id),
+            db.periodConfigDao().observeFor(
+                PeriodConfigScopes.targetFor(
+                    timetable.schoolCode,
+                    timetable.campusCode,
+                    timetable.periodTargetCode
+                ).scope
+            ),
+            db.periodConfigDao().observeDefaults()
+        ) { custom, school, defaults ->
+            val target = PeriodConfigScopes.targetFor(
+                timetable.schoolCode,
+                timetable.campusCode,
+                timetable.periodTargetCode
+            )
+            when {
+                custom.isNotEmpty() -> custom
+                school.isNotEmpty() -> school
+                else -> target.defaultConfigs.ifEmpty { defaults }
+            }
+        }
+
+    /** 学校级配置读写：所有属于该学校且没有课表独立配置的课表都会使用这份数据。 */
+    suspend fun getPeriodConfigsForTarget(target: PeriodConfigTarget): List<PeriodConfigEntity> {
+        val targetConfigs = db.periodConfigDao().getFor(target.scope)
+        return targetConfigs.ifEmpty { target.defaultConfigs }
+    }
+
     suspend fun getPeriodConfigs() = db.periodConfigDao().getDefaults()
     fun observePeriodConfigs() = db.periodConfigDao().observeDefaults()
+    suspend fun deletePeriodConfigsFor(timetableId: Long) = db.periodConfigDao().deleteFor(timetableId)
+
     suspend fun savePeriodConfigs(timetableId: Long, configs: List<com.example.awake.data.local.PeriodConfigEntity>) {
         require(configs.map { it.period }.distinct().size == configs.size) { "节次编号不能重复" }
-        require(configs.all { it.period in 1..PeriodConfigDefaults.periodCount && TIME_PATTERN.matches(it.startTime) && TIME_PATTERN.matches(it.endTime) }) {
+        require(configs.all { it.period in 1..30 && TIME_PATTERN.matches(it.startTime) && TIME_PATTERN.matches(it.endTime) }) {
             "节次时间格式应为 HH:mm"
         }
         db.withTransaction {
@@ -80,8 +132,15 @@ class LocalTimetableRepository(private val db: AppDatabase) {
     suspend fun findTimetable(profileId: Long, xnm: Int, xqm: String): TimetableEntity? =
         db.timetableDao().find(profileId, xnm, xqm)
 
-    suspend fun createTimetable(profileId: Long, xnm: Int, xqm: String, label: String): TimetableEntity {
-        val value = TimetableEntity(profileId = profileId, xnm = xnm, xqm = xqm, label = label)
+    suspend fun createTimetable(
+        profileId: Long,
+        xnm: Int,
+        xqm: String,
+        label: String,
+        schoolCode: String = SchoolCode.SCUT.code,
+        campusCode: String = ""
+    ): TimetableEntity {
+        val value = TimetableEntity(profileId = profileId, schoolCode = schoolCode, campusCode = campusCode, xnm = xnm, xqm = xqm, label = label)
         return value.copy(id = db.timetableDao().insert(value))
     }
 

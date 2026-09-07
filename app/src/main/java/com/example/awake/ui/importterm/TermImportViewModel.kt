@@ -2,19 +2,22 @@ package com.example.awake.ui.importterm
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.awake.data.local.JnuCampus
+import com.example.awake.data.local.PeriodConfigScopes
 import com.example.awake.data.local.TimetableEntity
 import com.example.awake.data.repository.LocalTimetableRepository
 import com.example.awake.data.repository.ReminderCoordinator
-import com.example.awake.data.repository.ScutScheduleRepository
+import com.example.awake.data.repository.SchoolScheduleRouter
 import com.example.awake.data.repository.TimetableSelectionStore
 import com.example.awake.data.remote.RemoteAcademicYear
 import com.example.awake.data.remote.AcademicTermsCache
 import com.example.awake.data.remote.RemoteSemester
 import com.example.awake.data.remote.ScutHttpException
-import com.example.awake.data.remote.ScutAuthRepository
+import com.example.awake.data.remote.JnuAuthRepository
 import com.example.awake.data.remote.SessionAvailability
 import com.example.awake.data.remote.SessionAvailabilityState
 import com.example.awake.data.remote.ScutCourseDto
+import com.example.awake.domain.model.SchoolCode
 import com.example.awake.domain.usecase.ExistingTimetablePolicy
 import com.example.awake.domain.usecase.ImportTimetableUseCase
 import java.time.DayOfWeek
@@ -47,7 +50,9 @@ data class ImportTermOption(
     /** JSON 分享文本导入的暂存项；不经过教务网络，导入时走本地解析。 */
     val isJson: Boolean = false,
     /** 空白手动课表暂存项；导入时创建空表（覆盖模式下清空当前课表）。 */
-    val isBlank: Boolean = false
+    val isBlank: Boolean = false,
+    /** 该学期选项所属学校；导入时据此路由到对应教务客户端。 */
+    val school: SchoolCode = SchoolCode.SCUT
 )
 
 /** 由教务接口实际返回的课程选项，不使用课程名称硬编码。 */
@@ -101,6 +106,10 @@ data class TermImportUiState(
     val overwriteTargetLabel: String? = null,
     /** 是否已有登录档案（用于教务系统导入区显示“去登录”）。 */
     val isLoggedIn: Boolean = false,
+    /** 当前教务导入的学校；切换学校会重置学期列表并重新读取。 */
+    val selectedSchool: SchoolCode = SchoolCode.SCUT,
+    /** 暨南大学需要选择校区；其他学校不需要，保持为 null。 */
+    val selectedCampus: JnuCampus? = null,
     /**
      * 待导入区当前聚焦展示的课表 key：导入多个课表时只展示这一份，
      * 通过下拉列表切换，默认聚焦最近添加/暂存的那一份。
@@ -113,13 +122,17 @@ class TermImportViewModel(
     private val importer: ImportTimetableUseCase,
     private val reminderCoordinator: ReminderCoordinator,
     private val selection: TimetableSelectionStore,
-    private val remote: ScutScheduleRepository,
+    private val remote: SchoolScheduleRouter,
     private val academicTermsCache: AcademicTermsCache,
-    private val auth: ScutAuthRepository,
+    private val auth: com.example.awake.data.remote.ScutAuthRepository,
+    private val jnuAuth: JnuAuthRepository,
     private val importMode: ImportMode = ImportMode.ADD,
-    private val jsonTimetableStore: com.example.awake.data.repository.JsonTimetableStore? = null
+    private val jsonTimetableStore: com.example.awake.data.repository.JsonTimetableStore? = null,
+    private val initialSchool: SchoolCode = SchoolCode.SCUT
 ) : ViewModel() {
-    private val _uiState = MutableStateFlow(TermImportUiState(mode = importMode))
+    private val _uiState = MutableStateFlow(
+        TermImportUiState(mode = importMode, selectedSchool = initialSchool, terms = defaultTermOptions(initialSchool))
+    )
     val uiState: StateFlow<TermImportUiState> = _uiState.asStateFlow()
     /** 防止初始化、重组或快速点击同时发起多个“实际课程列表”请求。 */
     private val previewMutex = Mutex()
@@ -158,10 +171,37 @@ class TermImportViewModel(
         viewModelScope.launch {
             local.activeProfile.collect { profile ->
                 val namedProfile = profile?.displayName?.isNotBlank() == true && profile.displayName != "未登录"
-                val loggedIn = auth.isAuthenticated() || namedProfile
+                val loggedIn = auth.isAuthenticated() || jnuAuth.isAuthenticated() || namedProfile
                 _uiState.value = _uiState.value.copy(isLoggedIn = loggedIn)
             }
         }
+    }
+
+    /** 切换教务导入学校：重置学期列表为该校默认项，并重新读取真实学期。 */
+    fun selectSchool(school: SchoolCode) {
+        if (_uiState.value.busy || _uiState.value.previewingTermKey != null) return
+        if (_uiState.value.selectedSchool == school) return
+        val preservedTerms = _uiState.value.terms.filter { it.isJson || it.isBlank }
+        _uiState.value = _uiState.value.copy(
+            selectedSchool = school,
+            selectedCampus = null,
+            terms = defaultTermOptions(school) + preservedTerms,
+            academicYears = emptyList(),
+            selectedAcademicYear = null,
+            selectedSemester = null,
+            focusedTermKey = null,
+            status = "已切换到${school.displayName}，正在读取学期列表…"
+        )
+        loadAcademicYears(force = true)
+    }
+
+    fun selectCampus(campus: JnuCampus) {
+        if (_uiState.value.busy || _uiState.value.previewingTermKey != null) return
+        if (_uiState.value.selectedSchool != SchoolCode.JNU) return
+        _uiState.value = _uiState.value.copy(
+            selectedCampus = campus,
+            status = "已选择暨南大学${campus.displayName}，导入后将使用该校区上课时间"
+        )
     }
 
     /** 根据当前日期优先定位学年：8 月起为当年-次年，1~7 月为上一年-当年。 */
@@ -177,7 +217,8 @@ class TermImportViewModel(
         val preferredYear = preferredAcademicYear(normalized)
         val selectedYear = preferredYear?.xnm
         val selectedSemester = preferredYear?.semesters?.firstOrNull()?.xqm
-        val terms = normalized.flatMap { year -> year.semesters.map { semester -> year.toImportTermOption(semester, false) } }
+        val school = _uiState.value.selectedSchool
+        val terms = normalized.flatMap { year -> year.semesters.map { semester -> year.toImportTermOption(semester, false, school) } }
         _uiState.value = _uiState.value.copy(academicYears = normalized, selectedAcademicYear = selectedYear, selectedSemester = selectedSemester, terms = terms, loadingAcademicYears = false, status = "已读取 ${normalized.size} 个学年，可选择后获取课程")
     }
 
@@ -196,9 +237,10 @@ class TermImportViewModel(
             var lastError: Throwable? = null
             repeat(3) { attempt ->
                 try {
-                    val sessions = withContext(Dispatchers.IO) { remote.probeSessions() }
+                    val school = _uiState.value.selectedSchool
+                    val sessions = withContext(Dispatchers.IO) { remote.probeSessions(school) }
                     updateSessionStatus(sessions)
-                    val years = withContext(Dispatchers.IO) { remote.academicTerms() }
+                    val years = withContext(Dispatchers.IO) { remote.academicTerms(school) }
                     applyAcademicYears(years)
                     _uiState.value = _uiState.value.copy(
                         loadingAcademicYears = false,
@@ -217,6 +259,9 @@ class TermImportViewModel(
                     if (attempt < 2) {
                         _uiState.value = _uiState.value.copy(status = "读取失败，${attempt + 1} 秒后自动重试（${attempt + 1}/2）…")
                         delay((attempt + 1) * 1000L)
+                        if (_uiState.value.selectedSchool == SchoolCode.JNU) {
+                            withContext(Dispatchers.IO) { jnuAuth.refreshFromCookieManager() }
+                        }
                     }
                 }
             }
@@ -312,6 +357,13 @@ class TermImportViewModel(
                 val state = _uiState.value
                 if (state.busy || state.previewingTermKey != null) return@withLock
                 val term = state.terms.firstOrNull { it.key == key } ?: return@withLock
+                if (term.school == SchoolCode.JNU && state.selectedCampus == null) {
+                    _uiState.value = state.copy(
+                        previewingTermKey = null,
+                        status = "请先选择暨南大学校区"
+                    )
+                    return@withLock
+                }
 
                 _uiState.value = state.copy(
                     previewingTermKey = key,
@@ -320,7 +372,7 @@ class TermImportViewModel(
                         if (it.key == key) it.copy(previewed = false, previewError = null) else it
                     }
                 )
-                runCatching { withContext(Dispatchers.IO) { remote.preview(term.xnm, term.xqm) } }
+                runCatching { withContext(Dispatchers.IO) { remote.preview(term.school, term.xnm, term.xqm) } }
                     .onSuccess { payload ->
                         val courses = payload.courses
                             .distinctBy(ScutCourseDto::remoteKey)
@@ -464,7 +516,8 @@ class TermImportViewModel(
             label = label,
             startDate = startDate,
             selected = true,
-            builtIn = false
+            builtIn = false,
+            school = _uiState.value.selectedSchool
         )
         if (importMode == ImportMode.OVERWRITE) {
             // 覆盖模式统一单选：新自定义学期顶掉之前的 JSON/空课表暂存，并取消其它选中。
@@ -504,6 +557,10 @@ class TermImportViewModel(
         val selected = _uiState.value.terms.filter { it.selected }
         if (selected.isEmpty()) {
             _uiState.value = _uiState.value.copy(status = "请至少选择一个要导入的学期课表")
+            return
+        }
+        if (selected.any { it.school == SchoolCode.JNU } && _uiState.value.selectedCampus == null) {
+            _uiState.value = _uiState.value.copy(status = "请先选择暨南大学校区")
             return
         }
         val notReady = selected.firstOrNull { !it.previewed }
@@ -632,6 +689,9 @@ class TermImportViewModel(
                                 )
                             }
                             else -> {
+                                val jnuCampus = if (term.school == SchoolCode.JNU) {
+                                    _uiState.value.selectedCampus ?: error("请先选择暨南大学校区")
+                                } else null
                                 importer(
                                     profile.id,
                                     term.xnm,
@@ -639,14 +699,21 @@ class TermImportViewModel(
                                     term.label,
                                     policy,
                                     term.courses.filter { it.selected }.map { it.remoteKey }.toSet(),
-                                    overrideTargetId = if (policy == ExistingTimetablePolicy.OVERWRITE) pendingOverwriteTargetId else null
+                                    overrideTargetId = if (policy == ExistingTimetablePolicy.OVERWRITE) pendingOverwriteTargetId else null,
+                                    school = term.school,
+                                    campusCode = jnuCampus?.name ?: ""
                                 ).timetable.also { importedResult ->
-                                    local.updateTimetable(
-                                        importedResult.copy(
-                                            label = if (policy == ExistingTimetablePolicy.OVERWRITE) term.label else importedResult.label,
-                                            startDate = term.startDate
-                                        )
+                                    var updated = importedResult.copy(
+                                        label = if (policy == ExistingTimetablePolicy.OVERWRITE) term.label else importedResult.label,
+                                        startDate = term.startDate
                                     )
+                                    jnuCampus?.let { campus ->
+                                        updated = updated.copy(campusCode = campus.name)
+                                        // 校区时间是共享配置；课表不再保存独立副本，设置页修改后能生效。
+                                        local.deletePeriodConfigsFor(updated.id)
+                                        local.savePeriodConfigs(PeriodConfigScopes.scopeFor(campus), campus.configs)
+                                    }
+                                    local.updateTimetable(updated)
                                 }
                             }
                         }
@@ -812,14 +879,26 @@ class TermImportViewModel(
     }
 }
 
-private fun RemoteAcademicYear.toImportTermOption(semester: RemoteSemester, selected: Boolean): ImportTermOption {
+private fun RemoteAcademicYear.toImportTermOption(
+    semester: RemoteSemester,
+    selected: Boolean,
+    school: SchoolCode = SchoolCode.SCUT
+): ImportTermOption {
     val academicYear = label.ifBlank { "$xnm-${xnm + 1}" }
     val termLabel = "$academicYear ${semester.label}"
-    val startDate = when (semester.xqm) {
+    val startDate = when (school) {
+        SchoolCode.JNU -> when (semester.xqm) {
+            "1" -> mondayOnOrAfter(LocalDate.of(xnm, 8, 25))
+            "2" -> mondayOnOrAfter(LocalDate.of(xnm + 1, 2, 15))
+            "3" -> mondayOnOrAfter(LocalDate.of(xnm + 1, 7, 1))
+            else -> mondayOnOrAfter(LocalDate.of(xnm, 8, 25))
+        }
+        else -> when (semester.xqm) {
         "3", "1" -> mondayOnOrAfter(LocalDate.of(xnm, 8, 25))
         "12", "2" -> mondayOnOrAfter(LocalDate.of(xnm + 1, 2, 15))
-        "16" -> mondayOnOrAfter(LocalDate.of(xnm + 1, 7, 1))
-        else -> mondayOnOrAfter(LocalDate.of(xnm, 8, 25))
+            "16" -> mondayOnOrAfter(LocalDate.of(xnm + 1, 7, 1))
+            else -> mondayOnOrAfter(LocalDate.of(xnm, 8, 25))
+        }
     }
     return ImportTermOption(
         key = "$xnm-${semester.xqm}",
@@ -829,11 +908,12 @@ private fun RemoteAcademicYear.toImportTermOption(semester: RemoteSemester, sele
         subtitle = "${semester.label} · 学期码 ${semester.xqm}",
         label = termLabel,
         startDate = startDate.toString(),
-        selected = selected
+        selected = selected,
+        school = school
     )
 }
 
-private fun defaultTermOptions(): List<ImportTermOption> {
+private fun defaultTermOptions(school: SchoolCode = SchoolCode.SCUT): List<ImportTermOption> {
     val today = LocalDate.now()
     val startYear = if (today.monthValue >= 8) today.year else today.year - 1
     val firstDate = mondayOnOrAfter(LocalDate.of(startYear, 8, 25))
@@ -843,6 +923,7 @@ private fun defaultTermOptions(): List<ImportTermOption> {
     return listOf(
         ImportTermOption(
             key = "$startYear-3",
+            school = school,
             xnm = startYear,
             xqm = "3",
             title = "$academicYear 第一学期",
@@ -853,6 +934,7 @@ private fun defaultTermOptions(): List<ImportTermOption> {
         ),
         ImportTermOption(
             key = "$startYear-12",
+            school = school,
             xnm = startYear,
             xqm = "12",
             title = "$academicYear 第二学期",
@@ -862,6 +944,7 @@ private fun defaultTermOptions(): List<ImportTermOption> {
         ),
         ImportTermOption(
             key = "$startYear-16",
+            school = school,
             xnm = startYear,
             xqm = "16",
             title = "$academicYear 暑期学期",
@@ -880,14 +963,16 @@ class TermImportViewModelFactory(
     private val importer: ImportTimetableUseCase,
     private val reminderCoordinator: ReminderCoordinator,
     private val selection: TimetableSelectionStore,
-    private val remote: ScutScheduleRepository,
+    private val remote: SchoolScheduleRouter,
     private val academicTermsCache: AcademicTermsCache,
-    private val auth: ScutAuthRepository,
+    private val auth: com.example.awake.data.remote.ScutAuthRepository,
+    private val jnuAuth: JnuAuthRepository,
     private val importMode: ImportMode = ImportMode.ADD,
-    private val jsonTimetableStore: com.example.awake.data.repository.JsonTimetableStore? = null
+    private val jsonTimetableStore: com.example.awake.data.repository.JsonTimetableStore? = null,
+    private val initialSchool: SchoolCode = SchoolCode.SCUT
 ) : androidx.lifecycle.ViewModelProvider.Factory {
     override fun <T : ViewModel> create(modelClass: Class<T>): T =
-        TermImportViewModel(local, importer, reminderCoordinator, selection, remote, academicTermsCache, auth, importMode, jsonTimetableStore) as T
+        TermImportViewModel(local, importer, reminderCoordinator, selection, remote, academicTermsCache, auth, jnuAuth, importMode, jsonTimetableStore, initialSchool) as T
 }
 
 private fun ScutCourseDto.toImportOption(): ImportCourseOption = ImportCourseOption(
@@ -920,8 +1005,3 @@ private fun dayNameFor(day: Int): String = when (day) {
     7 -> "日"
     else -> "未知"
 }
-
-
-
-
-

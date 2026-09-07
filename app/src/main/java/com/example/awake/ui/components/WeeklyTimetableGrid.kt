@@ -90,7 +90,14 @@ fun WeeklyTimetableGrid(
         buildCoursePaletteMap(courses + previousCourses + nextCourses, darkTheme)
     }
 
-    val totalPeriodCount = PeriodConfigDefaults.periodCount
+    // 节次编号允许不连续（例如暨大番禺校区跳过 5、9）。
+    // 缺失编号用 0 高度占位，保证后面的编号仍使用教务原始编号定位。
+    // 没有配置的普通节次也要占位显示（例如部分旧数据只保存了有课节次）。
+    // 因此总数取所有配置和所有课程的最大节次，且至少保留默认节次数。
+    val totalPeriodCount = maxOf(
+        periodConfigs.maxOfOrNull { it.period } ?: 0,
+        (courses + previousCourses + nextCourses).maxOfOrNull { it.endPeriod } ?: 0
+    ).coerceAtLeast(PeriodConfigDefaults.periodCount)
 
     BoxWithConstraints(
         modifier = modifier
@@ -110,7 +117,26 @@ fun WeeklyTimetableGrid(
         }
         val pageWidth = this@BoxWithConstraints.maxWidth
         val pageWidthPx = with(density) { pageWidth.toPx() }
-        val gridHeight = HeaderHeight + rowHeight * totalPeriodCount
+        // 放空节次（午休/晚休）只占普通节次的 1/4 高度。
+        // 这里统一生成每一节的实际高度与累计偏移，保证左侧时间列、空白格和课程卡片完全对齐。
+        val emptyRowHeight = rowHeight / 4f
+        val periodHeights = List(totalPeriodCount) { index ->
+            when (val config = periodByNumber[index + 1]) {
+                null -> rowHeight
+                else -> if (config.isEmpty) emptyRowHeight else rowHeight
+            }
+        }
+        val periodOffsets = run {
+            val offsets = ArrayList<Dp>(totalPeriodCount)
+            var offset = 0.dp
+            for (height in periodHeights) {
+                offsets.add(offset)
+                offset += height
+            }
+            offsets
+        }
+        val gridContentHeight = periodHeights.reduce { acc, height -> acc + height }
+        val gridHeight = HeaderHeight + gridContentHeight
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -182,6 +208,9 @@ fun WeeklyTimetableGrid(
                     rowHeight = rowHeight,
                     totalPeriodCount = totalPeriodCount,
                     periodByNumber = periodByNumber,
+                    periodHeights = periodHeights,
+                    periodOffsets = periodOffsets,
+                    gridContentHeight = gridContentHeight,
                     periodsPerScreen = periodsPerScreen,
                     dayNames = dayNames,
                     paletteByCourse = paletteByCourse,
@@ -201,6 +230,9 @@ fun WeeklyTimetableGrid(
                     rowHeight = rowHeight,
                     totalPeriodCount = totalPeriodCount,
                     periodByNumber = periodByNumber,
+                    periodHeights = periodHeights,
+                    periodOffsets = periodOffsets,
+                    gridContentHeight = gridContentHeight,
                     periodsPerScreen = periodsPerScreen,
                     dayNames = dayNames,
                     paletteByCourse = paletteByCourse,
@@ -220,6 +252,9 @@ fun WeeklyTimetableGrid(
                     rowHeight = rowHeight,
                     totalPeriodCount = totalPeriodCount,
                     periodByNumber = periodByNumber,
+                    periodHeights = periodHeights,
+                    periodOffsets = periodOffsets,
+                    gridContentHeight = gridContentHeight,
                     periodsPerScreen = periodsPerScreen,
                     dayNames = dayNames,
                     paletteByCourse = paletteByCourse,
@@ -243,6 +278,9 @@ private fun WeekGridPage(
     rowHeight: Dp,
     totalPeriodCount: Int,
     periodByNumber: Map<Int, PeriodConfigEntity>,
+    periodHeights: List<Dp>,
+    periodOffsets: List<Dp>,
+    gridContentHeight: Dp,
     periodsPerScreen: Int,
     dayNames: List<String>,
     paletteByCourse: Map<Long, CoursePalette>,
@@ -252,6 +290,53 @@ private fun WeekGridPage(
 ) {
     BoxWithConstraints(modifier = modifier) {
         val dayColumnWidth = ((this@BoxWithConstraints.maxWidth - TimeColumnWidth) / dayNames.size).coerceAtLeast(1.dp)
+        // 相邻且同类型的放空节次合并成一个整体显示。
+        // 例如暨大本部第 5、6 节都是午休时，只渲染一个“午休”色块。
+        val emptyPeriodGroups = buildList {
+            var current: Triple<Int, PeriodConfigEntity, Dp>? = null
+            (1..totalPeriodCount).forEach { period ->
+                val config = periodByNumber[period]?.takeIf { it.isEmpty } ?: run {
+                    current = null
+                    return@forEach
+                }
+                val itemHeight = periodHeights[period - 1]
+                val previous = current
+                if (previous != null && previous.second.emptyType == config.emptyType) {
+                    set(
+                        lastIndex,
+                        Triple(
+                            previous.first,
+                            previous.second,
+                            previous.third + itemHeight
+                        )
+                    )
+                } else {
+                    add(Triple(period, config, itemHeight))
+                }
+                current = last()
+            }
+        }
+        emptyPeriodGroups.forEach { (startPeriod, config, mergedHeight) ->
+            // 合并后仍只显示一个块；块高保持单个放空节次的厚度。
+            val visualHeight = periodHeights[startPeriod - 1]
+            val visualOffset = periodOffsets[startPeriod - 1] + (mergedHeight - visualHeight) / 2
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = TimeColumnWidth)
+                    .offset(y = HeaderHeight + visualOffset)
+                    .height(visualHeight)
+                    .background(Color(0xFFE1E7F5)),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = config.emptyLabel,
+                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 8.sp),
+                    maxLines = 1,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
         Row(modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.width(TimeColumnWidth)) {
                 Box(
@@ -266,38 +351,44 @@ private fun WeekGridPage(
                     )
                 }
                 (1..totalPeriodCount).forEach { period ->
+                    val config = periodByNumber[period]
                     Box(
-                        modifier = Modifier.height(rowHeight).fillMaxWidth(),
+                        modifier = Modifier.height(periodHeights[period - 1]).fillMaxWidth(),
                         contentAlignment = Alignment.TopStart
                     ) {
                         Column(
                             modifier = Modifier.padding(start = 2.dp, top = 4.dp),
                             horizontalAlignment = Alignment.Start
                         ) {
-                            Text(
-                                text = period.toString(),
-                                style = MaterialTheme.typography.labelMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onSurface
-                            )
-                            periodByNumber[period]?.let { config ->
+                            // 普通无课节次和缺失配置的节次都要显示编号；
+                            // 只有明确标记为午休/晚休的放空节次隐藏左侧文字。
+                            if (config == null || !config.isEmpty) {
                                 Text(
-                                    text = config.startTime,
-                                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
-                                    fontWeight = FontWeight.SemiBold,
+                                    text = period.toString(),
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.Bold,
                                     color = MaterialTheme.colorScheme.onSurface
                                 )
-                                Text(
-                                    text = config.endTime,
-                                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = MaterialTheme.colorScheme.onSurface
-                                )
+
+                                config?.let { config ->
+                                    Text(
+                                        text = config.startTime,
+                                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                    Text(
+                                        text = config.endTime,
+                                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                }
                             }
                         }
                     }
                 }
-            }
+                }
 
             dayNames.forEachIndexed { index, name ->
                 val day = index + 1
@@ -350,13 +441,15 @@ private fun WeekGridPage(
                         }
                     }
                     Box(
-                        modifier = Modifier.height(rowHeight * totalPeriodCount).fillMaxWidth()
+                        modifier = Modifier.height(gridContentHeight).fillMaxWidth()
                     ) {
                         Column(modifier = Modifier.fillMaxWidth()) {
                             (1..totalPeriodCount).forEach { period ->
+                                val config = periodByNumber[period]
+                                if (config?.isEmpty == true) return@forEach
                                 Box(
                                     modifier = Modifier
-                                        .height(rowHeight)
+                                        .height(periodHeights[period - 1])
                                         .fillMaxWidth()
                                         .clickable { onEmptyClick(day, period) }
                                         .semantics {
@@ -369,6 +462,9 @@ private fun WeekGridPage(
                             WeekGridCourseCard(
                                 course = positioned.course,
                                 rowHeight = rowHeight,
+                                periodHeights = periodHeights,
+                                periodOffsets = periodOffsets,
+                                gridContentHeight = gridContentHeight,
                                 columnWidth = dayColumnWidth,
                                 laneIndex = positioned.laneIndex,
                                 laneCount = positioned.laneCount,
@@ -510,8 +606,3 @@ private fun LegendItem(color: Color, text: String) {
         Text(text, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
-
-
-
-
-

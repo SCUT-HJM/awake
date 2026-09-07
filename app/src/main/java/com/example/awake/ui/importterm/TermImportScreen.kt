@@ -44,6 +44,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -55,6 +56,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.awake.data.local.JnuCampus
+import com.example.awake.domain.model.SchoolCode
 import java.time.LocalDate
 import java.time.temporal.TemporalAdjusters
 
@@ -64,7 +67,8 @@ fun TermImportScreen(
     viewModel: TermImportViewModel,
     onBack: () -> Unit,
     onDone: () -> Unit,
-    onLogin: () -> Unit = {}
+    onLogin: (String) -> Unit = {},
+    onSwitchSchool: () -> Unit = {}
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     var showCustomTermDialog by remember { mutableStateOf(false) }
@@ -76,6 +80,15 @@ fun TermImportScreen(
     var termMenuExpanded by remember { mutableStateOf(false) }
     var academicYearMenuExpanded by remember { mutableStateOf(false) }
     var semesterMenuExpanded by remember { mutableStateOf(false) }
+    var campusMenuExpanded by remember { mutableStateOf(false) }
+
+    // 刚从官方登录页返回时，导入页可能已缓存过一次失败状态；这里在登录态
+    // 从 false 变为 true 后强制重新读取一次学年列表。
+    LaunchedEffect(state.isLoggedIn, state.selectedSchool) {
+        if (state.isLoggedIn) {
+            viewModel.loadAcademicYears(force = true)
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -106,6 +119,16 @@ fun TermImportScreen(
                     onExpandedChange = { importSectionExpanded = it }
                 ) {
                     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                state.selectedSchool.displayName,
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold
+                            )
+                            TextButton(onClick = onSwitchSchool, enabled = !state.busy && state.previewingTermKey == null) {
+                                Text("切换")
+                            }
+                        }
                         val sessionColor = when (state.sessionStatus) {
                             SessionUiStatus.AVAILABLE -> MaterialTheme.colorScheme.primary
                             SessionUiStatus.CHECKING -> MaterialTheme.colorScheme.tertiary
@@ -151,9 +174,29 @@ fun TermImportScreen(
                         }
                         if (!state.isLoggedIn) {
                             OutlinedButton(
-                                onClick = onLogin,
+                                onClick = { onLogin(state.selectedSchool.code) },
                                 modifier = Modifier.fillMaxWidth()
                             ) { Text("未登录 · 前往官方页面登录") }
+                        }
+                        if (state.selectedSchool == SchoolCode.JNU) {
+                            SelectorField(
+                                label = "校区 *",
+                                value = state.selectedCampus?.displayName ?: "请选择校区",
+                                expanded = campusMenuExpanded,
+                                enabled = !state.busy && state.previewingTermKey == null,
+                                onClick = { campusMenuExpanded = !campusMenuExpanded },
+                                onDismiss = { campusMenuExpanded = false }
+                            ) {
+                                JnuCampus.entries.forEach { campus ->
+                                    DropdownMenuItem(
+                                        text = { Text(campus.displayName) },
+                                        onClick = {
+                                            campusMenuExpanded = false
+                                            viewModel.selectCampus(campus)
+                                        }
+                                    )
+                                }
+                            }
                         }
                         AcademicTermSelector(
                             state = state,
@@ -453,12 +496,20 @@ private fun AcademicTermSelector(
                     )
                 }
             }
+            val campusReady = state.selectedSchool != SchoolCode.JNU || state.selectedCampus != null
             Button(
                 onClick = onFetch,
-                enabled = enabled && year != null && semester != null && state.previewingTermKey == null,
+                enabled = enabled && year != null && semester != null && state.previewingTermKey == null && campusReady,
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Text(if (state.previewingTermKey != null) "正在获取课程…" else "获取并加入课程")
+            }
+            if (state.selectedSchool == SchoolCode.JNU && state.selectedCampus == null) {
+                Text(
+                    "暨南大学必须选择校区，用于匹配本部/番禺上课时间。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error
+                )
             }
             if (state.academicYears.isEmpty() && !state.loadingAcademicYears) {
                 Text(
@@ -963,4 +1014,3 @@ private fun ImportSection(
         }
     }
 }
-

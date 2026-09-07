@@ -56,7 +56,9 @@ class AwakeWidgetListService : RemoteViewsService() {
         private data class SegmentRow(
             val span: Int,
             val labels: List<Pair<String, String>>,
-            val pieces: Map<Int, CellPiece>
+            val pieces: Map<Int, CellPiece>,
+            val isEmptyGroup: Boolean = false,
+            val emptyLabel: String = ""
         )
 
         private val rows = mutableListOf<SegmentRow>()
@@ -98,9 +100,6 @@ class AwakeWidgetListService : RemoteViewsService() {
             val storedWeek = prefs.week(widgetId)
             val week = if (storedWeek in 1..totalWeeks) storedWeek else currentWeekOf(timetable)
             viewedWeek = week
-            val periodCount = PeriodConfigDefaults.periodCount.coerceAtMost(11)
-            val periods = local.getPeriodConfigsFor(timetable.id).associateBy { it.period }
-
             // 候选课程与 App 内完全同语义：
             // - 「显示非本周」开（默认）：本周或未来仍有课的时段（observeSlotsThroughEnd）；
             // - 关：仅本周时段（observeSlotsForWeek）。
@@ -116,6 +115,14 @@ class AwakeWidgetListService : RemoteViewsService() {
                     week in weeks || (showOtherWeeks && weeks.any { it >= week })
                 }
             }
+
+            // 普通无课节次也要占位；最多受小组件内置 14 节布局限制。
+            val periodCount = maxOf(
+                PeriodConfigDefaults.periodCount,
+                local.getPeriodConfigsFor(timetable).maxOfOrNull { it.period } ?: 0,
+                candidates.maxOfOrNull { it.endPeriod } ?: 0
+            ).coerceIn(1, 14)
+            val periods = local.getPeriodConfigsFor(timetable).associateBy { it.period }
 
             // 每天做与 App 内 selectVisibleVariants 相同的变体去重（同一时段只显示最合适的版本），
             // 再按节次铺进单元格；同一时段冲突时先开始的课程优先（与旧行为一致）。
@@ -135,20 +142,60 @@ class AwakeWidgetListService : RemoteViewsService() {
                         val inWeek = weeksBySection[course.sectionId]?.contains(week) == true
                         val endEff = course.endPeriod.coerceAtMost(periodCount)
                         for (period in course.startPeriod..endEff) {
-                            courseByCell.putIfAbsent(day to period, course to inWeek)
+                            courseByCell.putIfAbsent(day to period, course.copy(endPeriod = endEff) to inWeek)
                         }
                     }
             }
-            if (courseByCell.isEmpty()) return emptyList()
+            if (courseByCell.isEmpty()) return rowsBetween(periods, 1, periodCount + 1)
 
-            // 分段边界 = 所有渲染课程的起点与终点+1；连续节次由此被切成完整的段。
+            // 小组件要和主界面一样把同一门课连续节次合并成一整块。
+            // 否则有些数据会按节次拆成多个相邻 section，组件就会把一块课程拆成
+            // TOP/BOTTOM 两行，文字只出现在第一行，看起来不是居中的。
+            val mergedCourseByCell = HashMap<Pair<Int, Int>, Pair<CourseSlotEntity, Boolean>>()
+            (1..7).forEach { day ->
+                var period = 1
+                while (period <= periodCount) {
+                    val current = courseByCell[day to period]
+                    if (current == null) {
+                        period++
+                        continue
+                    }
+                    val (course, inWeek) = current
+                    var endPeriod = period
+                    while (endPeriod + 1 <= periodCount) {
+                        val next = courseByCell[day to endPeriod + 1] ?: break
+                        val (nextCourse, nextInWeek) = next
+                        val canMerge = nextCourse.courseId == course.courseId &&
+                            nextCourse.room == course.room &&
+                            nextCourse.teacher == course.teacher &&
+                            nextCourse.rawWeekText == course.rawWeekText &&
+                            nextCourse.source == course.source &&
+                            nextInWeek == inWeek
+                        if (!canMerge) break
+                        endPeriod++
+                    }
+                    // 关键：同一门课合并后，仍要把每个被覆盖的节次都放进 map。
+                    // 否则边界行（例如 4）查不到从 3 开始的课，课程底部会被画成空白。
+                    val merged = course.copy(startPeriod = period, endPeriod = endPeriod) to inWeek
+                    for (covered in period..endPeriod) {
+                        mergedCourseByCell[day to covered] = merged
+                    }
+                    period = endPeriod + 1
+                }
+            }
+            courseByCell.clear()
+            courseByCell.putAll(mergedCourseByCell)
+
+            // 分段边界 = 所有渲染课程的起点与终点+1。边界可以把课程分成 TOP/MID/BOTTOM，
+            // 关键是每行都按“当前段起点覆盖到的课程”取数据，而不是只查课程的起始节次。
             val bounds = sortedSetOf(1, periodCount + 1)
-            courseByCell.values.map { it.first }.distinctBy { it.sectionId }.forEach { course ->
+            courseByCell.values.map { it.first }.forEach { course ->
                 bounds.add(course.startPeriod.coerceIn(1, periodCount))
                 bounds.add(course.endPeriod.coerceAtMost(periodCount) + 1)
             }
             val list = bounds.toList()
-            return (0 until list.size - 1).flatMap { index ->
+            val courseSegments = mutableListOf<Triple<Int, Int, Map<Int, CellPiece>>>()
+            (0 until list.size - 1).forEach { index ->
                 val a = list[index]
                 val b = list[index + 1]
                 val pieces = (1..7).mapNotNull { day ->
@@ -162,19 +209,96 @@ class AwakeWidgetListService : RemoteViewsService() {
                         day to CellPiece(course, inWeek, kind)
                     }
                 }.toMap()
-                if (pieces.isEmpty()) {
-                    // 空段拆成单节行。
-                    (a until b).map {
-                        SegmentRow(span = 1, labels = listOf(periodLabels(periods, it)), pieces = emptyMap())
-                    }
-                } else {
-                    // 时间列不随课程合并：段内每个节次都保留自己的节次号与起止时间。
-                    val labels = (a until b).map { periodLabels(periods, it) }
-                    listOf(SegmentRow(span = b - a, labels = labels, pieces = pieces))
+                if (pieces.isNotEmpty()) {
+                    courseSegments.add(Triple(a, b, pieces))
                 }
             }
+
+            val result = mutableListOf<SegmentRow>()
+            var cursor = 1
+            courseSegments.forEach { (a, b, pieces) ->
+                result.addAll(rowsBetween(periods, cursor, a))
+                val labels = (a until b).map { periodLabels(periods, it) }
+                result.add(SegmentRow(span = b - a, labels = labels, pieces = pieces))
+                cursor = b
+            }
+            result.addAll(rowsBetween(periods, cursor, periodCount + 1))
+            return result
         }
 
+        /** 在课程段之间补齐普通无课行；连续同类型放空节次仍合并成一个淡灰色块。 */
+        private fun rowsBetween(
+            periods: Map<Int, com.example.awake.data.local.PeriodConfigEntity>,
+            from: Int,
+            untilExclusive: Int
+        ): List<SegmentRow> {
+            val rows = mutableListOf<SegmentRow>()
+            var cursor = from
+            while (cursor < untilExclusive) {
+                val config = periods[cursor]
+                if (config?.isEmpty == true) {
+                    var end = cursor
+                    while (end + 1 < untilExclusive) {
+                        val next = periods[end + 1]?.takeIf { it.isEmpty } ?: break
+                        if (next.emptyType != config.emptyType) break
+                        end++
+                    }
+                    rows.addAll(emptyRows(periods, cursor, end + 1))
+                    cursor = end + 1
+                } else {
+                    var end = cursor
+                    while (end + 1 < untilExclusive) {
+                        val next = periods[end + 1]
+                        if (next?.isEmpty == true) break
+                        end++
+                    }
+                    rows.add(
+                        SegmentRow(
+                            span = end - cursor + 1,
+                            labels = (cursor..end).map { periodLabels(periods, it) },
+                            pieces = emptyMap()
+                        )
+                    )
+                    cursor = end + 1
+                }
+            }
+            return rows
+        }
+
+        /** 连续同类型放空节次（午休/晚休）在小组件里同样合并成一个淡灰色块。 */
+        private fun emptyRows(
+            periods: Map<Int, com.example.awake.data.local.PeriodConfigEntity>,
+            from: Int,
+            untilExclusive: Int
+        ): List<SegmentRow> {
+            val rows = mutableListOf<SegmentRow>()
+            var cursor = from
+            while (cursor < untilExclusive) {
+                val config = periods[cursor]?.takeIf { it.isEmpty } ?: run {
+                    cursor++
+                    null
+                } ?: continue
+                var end = cursor
+                while (end + 1 < untilExclusive) {
+                    val next = periods[end + 1]?.takeIf { it.isEmpty } ?: break
+                    if (next.emptyType != config.emptyType) break
+                    end++
+                }
+                rows.add(
+                    SegmentRow(
+                        span = end - cursor + 1,
+                        labels = emptyList(),
+                        pieces = emptyMap(),
+                        isEmptyGroup = true,
+                        emptyLabel = config.emptyLabel
+                    )
+                )
+                cursor = end + 1
+            }
+            return rows
+        }
+
+        /** 单个节次的时间列标签：节次号 + 起止时间。 */
         /** 单个节次的时间列标签：节次号 + 起止时间。 */
         private fun periodLabels(
             periods: Map<Int, com.example.awake.data.local.PeriodConfigEntity>,
@@ -193,6 +317,13 @@ class AwakeWidgetListService : RemoteViewsService() {
         @Synchronized
         override fun getViewAt(position: Int): RemoteViews {
             val row = rows[position]
+            if (row.isEmptyGroup) {
+                val empty = RemoteViews(context.packageName, R.layout.widget_week_empty)
+                empty.setInt(R.id.widget_empty_bg, "setBackgroundColor", WidgetPalette.emptyPeriodBackground(dark))
+                empty.setTextViewText(R.id.widget_empty_tx, row.emptyLabel)
+                empty.setTextColor(R.id.widget_empty_tx, WidgetPalette.textSecondary(dark))
+                return empty
+            }
             val layout = rowLayouts[(row.span - 1).coerceIn(rowLayouts.indices)]
             val views = RemoteViews(context.packageName, layout)
             // 时间列逐节渲染：labels 与行内节次一一对应（布局里的 widget_rl_0..N / widget_rlt_0..N）。
@@ -263,7 +394,7 @@ class AwakeWidgetListService : RemoteViewsService() {
             PieceKind.BOTTOM -> R.drawable.widget_cell_f_bot
         }
 
-        override fun getViewTypeCount(): Int = rowLayouts.size
+        override fun getViewTypeCount(): Int = rowLayouts.size + 1
 
         override fun getItemId(position: Int): Long = position.toLong()
 
@@ -276,12 +407,14 @@ class AwakeWidgetListService : RemoteViewsService() {
         private val labelNumIds = intArrayOf(
             R.id.widget_rl_0, R.id.widget_rl_1, R.id.widget_rl_2, R.id.widget_rl_3,
             R.id.widget_rl_4, R.id.widget_rl_5, R.id.widget_rl_6, R.id.widget_rl_7,
-            R.id.widget_rl_8, R.id.widget_rl_9, R.id.widget_rl_10
+            R.id.widget_rl_8, R.id.widget_rl_9, R.id.widget_rl_10,
+            R.id.widget_rl_11, R.id.widget_rl_12, R.id.widget_rl_13
         )
         private val labelTimeIds = intArrayOf(
             R.id.widget_rlt_0, R.id.widget_rlt_1, R.id.widget_rlt_2, R.id.widget_rlt_3,
             R.id.widget_rlt_4, R.id.widget_rlt_5, R.id.widget_rlt_6, R.id.widget_rlt_7,
-            R.id.widget_rlt_8, R.id.widget_rlt_9, R.id.widget_rlt_10
+            R.id.widget_rlt_8, R.id.widget_rlt_9, R.id.widget_rlt_10,
+            R.id.widget_rlt_11, R.id.widget_rlt_12, R.id.widget_rlt_13
         )
         private val borderIds = intArrayOf(
             R.id.widget_cell_border_1, R.id.widget_cell_border_2, R.id.widget_cell_border_3,
@@ -302,7 +435,9 @@ class AwakeWidgetListService : RemoteViewsService() {
             R.layout.widget_week_row_s1, R.layout.widget_week_row_s2, R.layout.widget_week_row_s3,
             R.layout.widget_week_row_s4, R.layout.widget_week_row_s5, R.layout.widget_week_row_s6,
             R.layout.widget_week_row_s7, R.layout.widget_week_row_s8, R.layout.widget_week_row_s9,
-            R.layout.widget_week_row_s10, R.layout.widget_week_row_s11
+            R.layout.widget_week_row_s10, R.layout.widget_week_row_s11,
+            R.layout.widget_week_row_s12, R.layout.widget_week_row_s13,
+            R.layout.widget_week_row_s14
         )
     }
 }

@@ -5,6 +5,8 @@ package com.example.awake.data.remote
  * 不接收密码、Cookie、ticket 等认证敏感信息。
  */
 interface SchoolAdapter {
+    /** 用于学校选择页展示的教务系统类型。 */
+    val systemType: String
     val code: String
     val displayName: String
 
@@ -15,6 +17,14 @@ interface SchoolAdapter {
 class ScutAdapter : SchoolAdapter {
     override val code = "SCUT"
     override val displayName = "华南理工大学"
+    override val systemType = "正方教务"
+}
+
+/** 暨南大学适配器。认证和课表请求由 JNU 专用网络层负责。 */
+class JnuAdapter : SchoolAdapter {
+    override val code = "JNU"
+    override val displayName = "暨南大学"
+    override val systemType = "金智教务"
 }
 
 /**
@@ -23,7 +33,7 @@ class ScutAdapter : SchoolAdapter {
  * 首版只注册 SCUT；未来接入其他学校时，应新增独立适配器并在这里注册，
  * 不要在通用 UI 或 Repository 中继续堆叠学校特判。
  */
-class SchoolAdapterRegistry(adapters: List<SchoolAdapter> = listOf(ScutAdapter())) {
+class SchoolAdapterRegistry(adapters: List<SchoolAdapter> = listOf(ScutAdapter(), JnuAdapter())) {
     private val byCode: Map<String, SchoolAdapter> = adapters.associateBy { it.code }
 
     init {

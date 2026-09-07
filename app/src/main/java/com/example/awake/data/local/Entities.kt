@@ -24,6 +24,9 @@ data class TimetableEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val profileId: Long,
     val schoolCode: String = "SCUT",
+    val campusCode: String = "",
+    /** 当前课表显式选择的上课时间方案；为空时按学校/校区自动匹配。 */
+    val periodTargetCode: String? = null,
     val xnm: Int,
     val xqm: String,
     val label: String,
@@ -119,5 +122,24 @@ data class PeriodConfigEntity(
     val period: Int,
     val startTime: String,
     val endTime: String,
+    val emptyType: String = "",
+    val customLabel: String = "",
     val timetableId: Long = 0
-)
+) {
+    val isEmpty: Boolean get() = emptyType.isNotBlank()
+
+    val emptyLabel: String
+        get() = (if (customLabel == "晚修") "晚休" else customLabel).ifBlank {
+            when (emptyType) {
+                EMPTY_LUNCH -> "午休"
+                EMPTY_EVENING -> "晚休"
+                else -> "空"
+            }
+        }
+
+    companion object {
+        const val EMPTY_NONE = ""
+        const val EMPTY_LUNCH = "LUNCH"
+        const val EMPTY_EVENING = "EVENING"
+    }
+}

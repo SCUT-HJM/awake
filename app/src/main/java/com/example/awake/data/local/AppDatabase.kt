@@ -16,7 +16,7 @@ import com.example.awake.domain.model.CourseIdentity
         CourseWeekEntity::class,
         PeriodConfigEntity::class
     ],
-    version = 6,
+    version = 12,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -46,6 +46,7 @@ abstract class AppDatabase : RoomDatabase() {
                         id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
                         profileId INTEGER NOT NULL,
                         schoolCode TEXT NOT NULL,
+                        campusCode TEXT NOT NULL DEFAULT '' ,
                         xnm INTEGER NOT NULL,
                         xqm TEXT NOT NULL,
                         label TEXT NOT NULL,
@@ -388,6 +389,117 @@ abstract class AppDatabase : RoomDatabase() {
                 )
                 db.execSQL("DROP INDEX IF EXISTS `index_course_weeks_weekNumber`")
                 db.execSQL("CREATE INDEX `index_course_weeks_weekNumber` ON `course_weeks`(`weekNumber`)")
+            }
+        }
+
+        /**
+         * v7：period_configs 增加放空标记。放空节次仍保留编号与占位，
+         * 课程跨过该节次时课表仍能连续显示。
+         */
+        val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE period_configs ADD COLUMN isEmpty INTEGER NOT NULL DEFAULT 0"
+                )
+            }
+        }
+
+        /**
+         * v8：isEmpty 改为 emptyType，可区分午休和晚休。
+         * 旧数据中的 isEmpty=1 迁移为午休。
+         */
+        val MIGRATION_7_8 = object : Migration(7, 8) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `period_configs_new` (
+                        `period` INTEGER NOT NULL,
+                        `startTime` TEXT NOT NULL,
+                        `endTime` TEXT NOT NULL,
+                        `emptyType` TEXT NOT NULL,
+                        `timetableId` INTEGER NOT NULL,
+                        PRIMARY KEY(`timetableId`, `period`)
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    """
+                    INSERT INTO period_configs_new(period, startTime, endTime, emptyType, timetableId)
+                    SELECT period, startTime, endTime,
+                           CASE WHEN isEmpty = 1 THEN 'LUNCH' ELSE '' END,
+                           timetableId
+                    FROM period_configs
+                    """.trimIndent()
+                )
+                db.execSQL("DROP TABLE period_configs")
+                db.execSQL("ALTER TABLE period_configs_new RENAME TO period_configs")
+            }
+        }
+
+        /** v12：修正旧版本预填的暨大本部默认作息；仅清理旧的 11 节错误默认，不覆盖用户自定义。 */
+        val MIGRATION_11_12 = object : Migration(11, 12) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    DELETE FROM period_configs
+                    WHERE timetableId = -1000001
+                      AND (
+                        SELECT COUNT(*) FROM period_configs old
+                        WHERE old.timetableId = -1000001
+                      ) = 11
+                      AND EXISTS (
+                        SELECT 1 FROM period_configs p
+                        WHERE p.timetableId = -1000001
+                          AND p.period = 1 AND p.startTime = '08:50' AND p.endTime = '09:35'
+                      )
+                      AND EXISTS (
+                        SELECT 1 FROM period_configs p
+                        WHERE p.timetableId = -1000001
+                          AND p.period = 11 AND p.startTime = '20:50' AND p.endTime = '21:35'
+                      )
+                    """.trimIndent()
+                )
+            }
+        }
+
+        /** v11：允许课表显式选择任意一套上课时间，而不是只能按学校/校区自动匹配。 */
+        val MIGRATION_10_11 = object : Migration(10, 11) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE timetables ADD COLUMN periodTargetCode TEXT")
+            }
+        }
+
+        /** v10：课表记录校区，用于暨大本部/番禺匹配不同的上课时间 scope。 */
+        val MIGRATION_9_10 = object : Migration(9, 10) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE timetables ADD COLUMN campusCode TEXT NOT NULL DEFAULT ''"
+                )
+                // 旧的番禺导入没有持久化校区，这里按其“10 节 + 缺 5/9”的配置推断；其余暨大课表归为本部。
+                db.execSQL(
+                    """
+                    UPDATE timetables SET campusCode = 'PANYU'
+                    WHERE schoolCode = 'JNU' AND (
+                        SELECT COUNT(*) FROM period_configs pc
+                        WHERE pc.timetableId = timetables.id
+                    ) = 10 AND NOT EXISTS (
+                        SELECT 1 FROM period_configs pc
+                        WHERE pc.timetableId = timetables.id AND pc.period IN (5, 9)
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    "UPDATE timetables SET campusCode = 'MAIN' WHERE schoolCode = 'JNU' AND campusCode = ''"
+                )
+            }
+        }
+
+        /** v9：增加 customLabel 字段，允许用户自定义午休/晚休显示名称。 */
+        val MIGRATION_8_9 = object : Migration(8, 9) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE period_configs ADD COLUMN customLabel TEXT NOT NULL DEFAULT ''"
+                )
             }
         }
     }

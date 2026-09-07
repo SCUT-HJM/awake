@@ -1,11 +1,12 @@
 package com.example.awake.domain.model
 
 /** 仅描述学校，不保存密码、Cookie 或 ticket。 */
-enum class SchoolCode(val code: String, val displayName: String) {
-    SCUT("SCUT", "华南理工大学")
+enum class SchoolCode(val code: String, val displayName: String, val shortName: String = displayName) {
+    SCUT("SCUT", "华南理工大学", "华南理工"),
+    JNU("JNU", "暨南大学", "暨南大学")
 }
 
-enum class CourseSource { SCUT_KB, SCUT_SJK, MANUAL, MIGRATED_LEGACY }
+enum class CourseSource { SCUT_KB, SCUT_SJK, JNU_KB, MANUAL, MIGRATED_LEGACY }
 
 data class Profile(
     val id: Long,
