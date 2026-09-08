@@ -16,6 +16,7 @@ import com.example.awake.domain.model.CourseIdentity
 import com.example.awake.domain.model.SchoolCode
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import java.security.MessageDigest
 
 private val TIME_PATTERN = Regex("(?:[01]\\d|2[0-3]):[0-5]\\d")
 
@@ -146,6 +147,98 @@ class LocalTimetableRepository(private val db: AppDatabase) {
 
     suspend fun updateTimetable(timetable: TimetableEntity) = db.timetableDao().update(timetable)
 
+    /**
+     * 同步前校验远端课表属主。已有属主必须学校/学号完全匹配；
+     * 旧课表尚无属主时，只有当前档案能证明是同一账号才允许绑定。
+     */
+    private data class TimetableContentHashes(
+        val local: String,
+        val remote: String
+    )
+
+    private data class TimetableContentRow(
+        val source: String,
+        val remoteKey: String,
+        val name: String,
+        val teacher: String,
+        val room: String,
+        val dayOfWeek: Int,
+        val startPeriod: Int,
+        val endPeriod: Int,
+        val weeks: Set<Int>,
+        val locked: Boolean
+    )
+
+    private suspend fun prepareRemoteSync(
+        timetable: TimetableEntity,
+        schoolCode: String,
+        courses: List<CourseEntity>,
+        sections: List<CourseSectionEntity>,
+        weeks: List<CourseWeekEntity>,
+        remoteStudentId: String?,
+        remoteStudentName: String?,
+        ownerConfirmed: Boolean,
+        contentConfirmed: Boolean
+    ): Pair<TimetableEntity, TimetableContentHashes> {
+        val maskedRemoteId = remoteStudentId?.trim()?.takeIf { it.isNotEmpty() }?.maskStudentId()
+            ?: error("教务响应缺少学号，无法确认课表属主")
+
+        val ownerBound = timetable.ownerSchoolCode.isNotBlank() &&
+            timetable.ownerStudentIdMasked.isNotBlank()
+        if (ownerBound) {
+            require(
+                timetable.ownerSchoolCode == schoolCode &&
+                    timetable.ownerStudentIdMasked == maskedRemoteId
+            ) { "当前登录账号不是这份课表的主人，请新建课表后同步" }
+        }
+
+        val hasExistingCourses = db.courseDao().countCourses(timetable.id) > 0
+        val isLegacyTimetable = hasExistingCourses || timetable.lastSyncedAt != null
+        val ownerRequired = !ownerBound && isLegacyTimetable
+
+        val hashes = TimetableContentHashes(
+            local = localContentHash(timetable.id),
+            remote = remoteContentHash(courses, sections, weeks)
+        )
+        val hasStoredFingerprints = timetable.syncConfirmedLocalHash.isNotBlank() &&
+            timetable.syncConfirmedRemoteHash.isNotBlank()
+        val fingerprintsUnchanged = hasStoredFingerprints &&
+            timetable.syncConfirmedLocalHash == hashes.local &&
+            timetable.syncConfirmedRemoteHash == hashes.remote
+        val contentRequired = if (!isLegacyTimetable) {
+            false
+        } else if (hasStoredFingerprints) {
+            !fingerprintsUnchanged
+        } else {
+            hashes.local != hashes.remote
+        }
+
+        if ((ownerRequired && !ownerConfirmed) || (contentRequired && !contentConfirmed)) {
+            throw TimetableSyncConfirmationRequired(
+                TimetableSyncConfirmationRequest(
+                    timetableId = timetable.id,
+                    ownerRequired = ownerRequired && !ownerConfirmed,
+                    contentRequired = contentRequired && !contentConfirmed,
+                    ownerStudentIdMasked = maskedRemoteId,
+                    ownerStudentName = remoteStudentName
+                )
+            )
+        }
+
+        val ownerReady = if (ownerBound) {
+            timetable
+        } else {
+            timetable.copy(
+                ownerSchoolCode = schoolCode,
+                ownerStudentIdMasked = maskedRemoteId
+            )
+        }
+        if (!ownerBound) {
+            db.timetableDao().update(ownerReady)
+        }
+        return ownerReady to hashes
+    }
+
     suspend fun findOrCreateTimetable(profileId: Long, xnm: Int, xqm: String, label: String): TimetableEntity {
         return findTimetable(profileId, xnm, xqm) ?: createTimetable(profileId, xnm, xqm, label)
     }
@@ -234,8 +327,24 @@ class LocalTimetableRepository(private val db: AppDatabase) {
         timetable: TimetableEntity,
         courses: List<CourseEntity>,
         sections: List<CourseSectionEntity>,
-        weeks: List<CourseWeekEntity>
+        weeks: List<CourseWeekEntity>,
+        remoteStudentId: String?,
+        remoteStudentName: String?,
+        ownerConfirmed: Boolean,
+        contentConfirmed: Boolean
     ) = db.withTransaction {
+        // 所有学校的教务同步都统一绑定/校验属主，避免新增学校时漏掉账号检查。
+        val (ownerBound, hashes) = prepareRemoteSync(
+            timetable = timetable,
+            schoolCode = timetable.schoolCode,
+            courses = courses,
+            sections = sections,
+            weeks = weeks,
+            remoteStudentId = remoteStudentId,
+            remoteStudentName = remoteStudentName,
+            ownerConfirmed = ownerConfirmed,
+            contentConfirmed = contentConfirmed
+        )
         // 用户在详情页改过颜色的课程（≠ 默认算法色），在整删重建后按 (source, remoteKey) 原样带回，
         // 避免自动刷新看起来“没有落库”。
         val customizedColors = db.courseDao().getRemoteMasters(timetable.id)
@@ -260,7 +369,84 @@ class LocalTimetableRepository(private val db: AppDatabase) {
             sectionIds.getOrNull(week.sectionId.toInt())?.let { CourseWeekEntity(it, week.weekNumber) }
         }
         if (remapped.isNotEmpty()) db.courseDao().insertWeeks(remapped)
-        db.timetableDao().update(timetable.copy(lastSyncedAt = System.currentTimeMillis()))
+        // 替换完成后再取本地指纹：下次刷新时它代表“用户确认过的最新课表”。
+        val confirmedLocalHash = localContentHash(timetable.id)
+        db.timetableDao().update(
+            ownerBound.copy(
+                lastSyncedAt = System.currentTimeMillis(),
+                syncConfirmedLocalHash = confirmedLocalHash,
+                syncConfirmedRemoteHash = hashes.remote
+            )
+        )
+    }
+
+    private suspend fun localContentHash(timetableId: Long): String {
+        val masters = db.courseDao().getAllMasters(timetableId).associateBy { it.id }
+        return hashContentRows(
+            db.courseDao().getAllSectionsRaw(timetableId).mapNotNull { section ->
+                val master = masters[section.courseId] ?: return@mapNotNull null
+                TimetableContentRow(
+                    source = section.source,
+                    remoteKey = section.remoteKey,
+                    name = master.name,
+                    teacher = section.teacher.ifBlank { master.teacher },
+                    room = section.room,
+                    dayOfWeek = section.dayOfWeek,
+                    startPeriod = section.startPeriod,
+                    endPeriod = section.endPeriod,
+                    weeks = db.courseDao().getWeeks(section.id).mapTo(mutableSetOf()) { it.weekNumber },
+                    locked = section.locked
+                )
+            }
+        )
+    }
+
+    private fun remoteContentHash(
+        courses: List<CourseEntity>,
+        sections: List<CourseSectionEntity>,
+        weeks: List<CourseWeekEntity>
+    ): String {
+        val masterByIndex = courses.withIndex().associate { (index, course) -> index to course }
+        val weeksBySectionIndex: Map<Long, List<Int>> =
+            weeks.groupBy({ it.sectionId }, { it.weekNumber })
+        return hashContentRows(
+            sections.mapIndexedNotNull { index, section ->
+                val master = masterByIndex[section.courseId.toInt()] ?: return@mapIndexedNotNull null
+                TimetableContentRow(
+                    source = section.source,
+                    remoteKey = section.remoteKey,
+                    name = master.name,
+                    teacher = section.teacher.ifBlank { master.teacher },
+                    room = section.room,
+                    dayOfWeek = section.dayOfWeek,
+                    startPeriod = section.startPeriod,
+                    endPeriod = section.endPeriod,
+                    weeks = weeksBySectionIndex[index.toLong()].orEmpty().toSet(),
+                    locked = section.locked
+                )
+            }
+        )
+    }
+
+    private fun hashContentRows(rows: List<TimetableContentRow>): String {
+        if (rows.isEmpty()) return "empty"
+        val canonical = rows
+            .sortedWith(
+                compareBy(
+                    { it.source }, { it.name }, { it.remoteKey }, { it.dayOfWeek },
+                    { it.startPeriod }, { it.endPeriod }, { it.room }, { it.teacher }
+                )
+            )
+            .joinToString("\n") { row ->
+                listOf(
+                    row.source, row.remoteKey, row.name, row.teacher, row.room,
+                    row.dayOfWeek, row.startPeriod, row.endPeriod,
+                    row.weeks.sorted().joinToString(","), row.locked
+                ).joinToString("|")
+            }
+        return MessageDigest.getInstance("SHA-256")
+            .digest(canonical.toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
     }
 
     // ---- JSON 分享导出 / 导入 ----
@@ -331,7 +517,7 @@ class LocalTimetableRepository(private val db: AppDatabase) {
     /**
      * 从分享文本创建/覆盖课表：
      * - overrideTargetId != null：整表替换目标课表（元数据一并更新），失败恢复原元数据；
-     * - 否则新建课表（名称重复自动加“（新建）”后缀）。
+     * - 否则新建课表，直接使用来源中的名称。
      */
     suspend fun importTimetableFromJson(
         profileId: Long,
@@ -351,19 +537,7 @@ class LocalTimetableRepository(private val db: AppDatabase) {
                 totalWeeks = data.meta.totalWeeks
             ).also { updateTimetable(it) }
         } else {
-            val labels = getTimetables(profileId).map { it.label }.toSet()
-            var label = data.meta.label
-            if (label in labels) {
-                val base = "$label（新建）"
-                label = if (base !in labels) {
-                    base
-                } else {
-                    var suffix = 2
-                    while ("$base $suffix" in labels) suffix++
-                    "$base $suffix"
-                }
-            }
-            timetable = createTimetable(profileId, data.meta.xnm, data.meta.xqm, label).copy(
+            timetable = createTimetable(profileId, data.meta.xnm, data.meta.xqm, data.meta.label).copy(
                 startDate = data.meta.startDate,
                 totalWeeks = data.meta.totalWeeks
             ).also { updateTimetable(it) }

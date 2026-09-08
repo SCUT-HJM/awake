@@ -13,6 +13,8 @@ import com.example.awake.data.repository.LocalTimetableRepository
 import com.example.awake.data.repository.ReminderCoordinator
 import com.example.awake.data.repository.TimetableSelectionStore
 import com.example.awake.data.repository.TimetableDisplaySettingsStore
+import com.example.awake.data.repository.TimetableSyncConfirmationRequest
+import com.example.awake.data.repository.TimetableSyncConfirmationRequired
 import com.example.awake.domain.usecase.ObserveTimetableUseCase
 import com.example.awake.domain.model.SchoolCode
 import com.example.awake.domain.usecase.RefreshTimetableUseCase
@@ -61,6 +63,11 @@ class TimetableViewModel(
     /** JSON 分享课表首次刷新前的确认请求（弹窗由界面展示）。 */
     private val _pendingSyncConfirm = MutableStateFlow(false)
     val pendingSyncConfirm: StateFlow<Boolean> = _pendingSyncConfirm.asStateFlow()
+    /** 旧课表属主/内容差异需要人工确认；弹窗由界面展示。 */
+    private val _pendingTimetableConfirm =
+        MutableStateFlow<TimetableSyncConfirmationRequest?>(null)
+    val pendingTimetableConfirm: StateFlow<TimetableSyncConfirmationRequest?> =
+        _pendingTimetableConfirm.asStateFlow()
     val profile = observe.activeProfile.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
     val timetables: StateFlow<List<TimetableEntity>> = profile.flatMapLatest { p ->
         if (p == null) flowOf(emptyList()) else observe.timetables(p.id)
@@ -195,6 +202,8 @@ class TimetableViewModel(
         selectedId.value = id
         selection.setSelected(id)
         _syncState.value = TimetableSyncState.IDLE
+        _pendingTimetableConfirm.value = null
+        _pendingSyncConfirm.value = false
         viewModelScope.launch { reminderCoordinator.reschedule(id) }
     }
 
@@ -204,6 +213,8 @@ class TimetableViewModel(
             if (stored != selectedId.value) {
                 selectedId.value = stored
                 _syncState.value = TimetableSyncState.IDLE
+                _pendingTimetableConfirm.value = null
+                _pendingSyncConfirm.value = false
             }
         }
     }
@@ -270,8 +281,12 @@ class TimetableViewModel(
     }
 
     fun refresh() {
-        val id = selectedTimetableId.value ?: return
+        // 回到主界面时，选择存储可能已经切换到新课表；直接读它，避免短暂拿到旧表。
+        val id = selection.read() ?: selectedTimetableId.value ?: return
         if (_syncState.value == TimetableSyncState.REFRESHING) return
+        // 切换课表后，旧课表遗留的确认弹窗不能继续挡住新课表。
+        _pendingTimetableConfirm.value = null
+        _pendingSyncConfirm.value = false
         // JSON 分享课表保存的是别人的课程：首次刷新（含自动同步）前需要确认。
         if (jsonTimetableStore.isJsonImported(id) && !jsonTimetableStore.isSyncConfirmed(id)) {
             _pendingSyncConfirm.value = true
@@ -294,7 +309,11 @@ class TimetableViewModel(
         _message.value = "已取消同步，分享课表保持不变"
     }
 
-    private fun doRefresh(id: Long) {
+    private fun doRefresh(
+        id: Long,
+        ownerConfirmed: Boolean = false,
+        contentConfirmed: Boolean = false
+    ) {
         viewModelScope.launch {
             _syncState.value = TimetableSyncState.REFRESHING
             val school = runCatching {
@@ -304,7 +323,11 @@ class TimetableViewModel(
             } ?: SchoolCode.SCUT
             _message.value = "正在检查${school.displayName}教务会话并同步课表…"
             val sessions = runCatching { withContext(Dispatchers.IO) { remote.probeSessions(school) } }.getOrDefault(emptyList())
-            runCatching { withContext(Dispatchers.IO) { refreshUseCase(id) } }
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    refreshUseCase(id, ownerConfirmed, contentConfirmed)
+                }
+            }
                 .onSuccess { warnings ->
                     reminderCoordinator.reschedule(id)
                     _syncState.value = TimetableSyncState.SUCCESS
@@ -316,6 +339,12 @@ class TimetableViewModel(
                     }
                 }
                 .onFailure { error ->
+                    if (error is TimetableSyncConfirmationRequired) {
+                        _pendingTimetableConfirm.value = error.request
+                        _syncState.value = TimetableSyncState.IDLE
+                        _message.value = null
+                        return@onFailure
+                    }
                     val state = when ((error as? ScutHttpException)?.kind) {
                         ScutHttpException.Kind.NETWORK -> TimetableSyncState.OFFLINE
                         ScutHttpException.Kind.SESSION_EXPIRED -> TimetableSyncState.SESSION_EXPIRED
@@ -325,6 +354,22 @@ class TimetableViewModel(
                     _message.value = error.message ?: "同步失败，已保留旧课表"
                 }
         }
+    }
+
+    fun confirmTimetableSync() {
+        val request = _pendingTimetableConfirm.value ?: return
+        _pendingTimetableConfirm.value = null
+        doRefresh(
+            request.timetableId,
+            ownerConfirmed = request.ownerRequired,
+            contentConfirmed = request.contentRequired
+        )
+    }
+
+    fun cancelTimetableSyncConfirm() {
+        _pendingTimetableConfirm.value = null
+        _syncState.value = TimetableSyncState.IDLE
+        _message.value = "已取消同步，课表保持不变"
     }
 }
 

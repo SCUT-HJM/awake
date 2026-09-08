@@ -8,6 +8,8 @@ import com.example.awake.data.local.TimetableEntity
 import com.example.awake.data.repository.LocalTimetableRepository
 import com.example.awake.data.repository.ReminderCoordinator
 import com.example.awake.data.repository.SchoolScheduleRouter
+import com.example.awake.data.repository.TimetableSyncConfirmationRequest
+import com.example.awake.data.repository.TimetableSyncConfirmationRequired
 import com.example.awake.data.repository.TimetableSelectionStore
 import com.example.awake.data.remote.RemoteAcademicYear
 import com.example.awake.data.remote.AcademicTermsCache
@@ -99,6 +101,8 @@ data class TermImportUiState(
     val conflictTerm: ImportTermOption? = null,
     val pendingTerms: List<ImportTermOption> = emptyList(),
     val importedCount: Int = 0,
+    /** 覆盖旧课表时，教务返回属主/内容与本地不一致需要人工确认。 */
+    val pendingSyncConfirmation: TimetableSyncConfirmationRequest? = null,
     val previewingTermKey: String? = null,
     /** 本次导入模式；覆盖模式下执行前会再次确认目标课表。 */
     val mode: ImportMode = ImportMode.ADD,
@@ -165,13 +169,10 @@ class TermImportViewModel(
                 }
             }
         }
-        // 登录状态用于「教务系统导入」区的去登录按钮。刚完成直连/VPN 登录时，
-        // 本地档案的名称要等首次导入课表才会更新，所以这里同时参考进程内的
-        // 教务会话：会话可用即视为已登录，不依赖本地档案名称。
+        // 登录状态只看进程内教务会话；档案名属于导入历史，不能作为会话兜底。
         viewModelScope.launch {
             local.activeProfile.collect { profile ->
-                val namedProfile = profile?.displayName?.isNotBlank() == true && profile.displayName != "未登录"
-                val loggedIn = auth.isAuthenticated() || jnuAuth.isAuthenticated() || namedProfile
+                val loggedIn = auth.isAuthenticated() || jnuAuth.isAuthenticated()
                 _uiState.value = _uiState.value.copy(isLoggedIn = loggedIn)
             }
         }
@@ -703,10 +704,13 @@ class TermImportViewModel(
                                     school = term.school,
                                     campusCode = jnuCampus?.name ?: ""
                                 ).timetable.also { importedResult ->
-                                    var updated = importedResult.copy(
-                                        label = if (policy == ExistingTimetablePolicy.OVERWRITE) term.label else importedResult.label,
-                                        startDate = term.startDate
-                                    )
+                                    // 导入过程中仓库可能已绑定属主并写入同步指纹；
+                                    // 必须基于落库后的最新实体更新展示元数据。
+                                    val synced = local.getTimetable(importedResult.id)
+                                    var updated = synced.copy(
+                                            label = if (policy == ExistingTimetablePolicy.OVERWRITE) term.label else importedResult.label,
+                                            startDate = term.startDate
+                                        )
                                     jnuCampus?.let { campus ->
                                         updated = updated.copy(campusCode = campus.name)
                                         // 校区时间是共享配置；课表不再保存独立副本，设置页修改后能生效。
@@ -721,6 +725,16 @@ class TermImportViewModel(
                 }
 
                 val importedResult = result.getOrElse { error ->
+                    if (error is TimetableSyncConfirmationRequired) {
+                        _uiState.value = _uiState.value.copy(
+                            busy = false,
+                            status = "需要确认课表账号或内容差异，确认后继续导入",
+                            pendingSyncConfirmation = error.request,
+                            pendingTerms = remaining,
+                            importedCount = imported
+                        )
+                        return@launch
+                    }
                     _uiState.value = _uiState.value.copy(
                         busy = false,
                         status = "“${term.label}”导入失败：${error.message ?: "未知错误"}",
@@ -755,6 +769,27 @@ class TermImportViewModel(
             jsonPayloads.clear()
             onDone()
         }
+    }
+
+    fun confirmSyncConfirmation(onDone: () -> Unit) {
+        val state = _uiState.value
+        if (state.busy || state.pendingSyncConfirmation == null || state.pendingTerms.isEmpty()) return
+        _uiState.value = state.copy(pendingSyncConfirmation = null)
+        runImportQueue(state.pendingTerms, onDone = onDone, alreadyImported = state.importedCount)
+    }
+
+    fun cancelSyncConfirmation() {
+        val state = _uiState.value
+        if (state.busy) return
+        conflictPolicies.clear()
+        pendingOverwriteTargetId = null
+        jsonPayloads.clear()
+        _uiState.value = state.copy(
+            pendingSyncConfirmation = null,
+            pendingTerms = emptyList(),
+            importedCount = state.importedCount,
+            status = "已取消导入，原课表保持不变"
+        )
     }
 
     /** 暂存一个空白手动课表到「待导入课表」列表（与 JSON 一样统一导入执行）。 */

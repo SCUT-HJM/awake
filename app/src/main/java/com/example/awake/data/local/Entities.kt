@@ -32,7 +32,13 @@ data class TimetableEntity(
     val label: String,
     val startDate: String? = null,
     val totalWeeks: Int = 20,
-    val lastSyncedAt: Long? = null
+    val lastSyncedAt: Long? = null,
+    /** 首次教务同步时绑定的课表属主，避免同一本地档案切换账号后误覆盖他人课表。 */
+    val ownerSchoolCode: String = "",
+    val ownerStudentIdMasked: String = "",
+    /** 上次内容确认时的本地/远端课表指纹；两者都没变时不再重复询问。 */
+    val syncConfirmedLocalHash: String = "",
+    val syncConfirmedRemoteHash: String = ""
 )
 
 /**

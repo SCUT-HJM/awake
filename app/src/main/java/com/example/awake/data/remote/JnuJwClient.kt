@@ -42,7 +42,7 @@ class JnuSessionStore {
                 .orEmpty()
             Log.d("AwakeJnuJw", "capture cookies path=$path names=${names.joinToString(",")}")
         }
-        if (cookies.isNotEmpty()) authenticated = true
+        authenticated = cookies.any { it.first in AUTH_COOKIE_NAMES }
     }
 
     @Synchronized
@@ -59,6 +59,7 @@ class JnuSessionStore {
 
     companion object {
         const val JW_HOST = "jw.jnu.edu.cn"
+        private val AUTH_COOKIE_NAMES = setOf("JSESSIONID", "CASTGC", "MOD_AMP_AUTH", "asessionid")
     }
 }
 

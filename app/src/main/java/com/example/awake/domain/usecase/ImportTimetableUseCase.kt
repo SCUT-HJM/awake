@@ -21,7 +21,7 @@ enum class ExistingTimetablePolicy {
 /**
  * 按用户选择执行导入：
  * - overrideTargetId != null：直接覆盖该课表（学期元数据一并更新为本次导入的学期），失败不损坏原有课程；
- * - 否则按 policy 处理同学期课表（OVERWRITE 复用 / CREATE_NEW 新建“（新建）”后缀课表）。
+ * - 否则按 policy 处理同学期课表（OVERWRITE 复用 / CREATE_NEW 新建课表）。
  * 网络与解析失败时新导入流程不落库，原有课表保持完整。
  */
 class ImportTimetableUseCase(
@@ -37,7 +37,9 @@ class ImportTimetableUseCase(
         selectedRemoteKeys: Set<String>? = null,
         overrideTargetId: Long? = null,
         school: com.example.awake.domain.model.SchoolCode = com.example.awake.domain.model.SchoolCode.SCUT,
-        campusCode: String = ""
+        campusCode: String = "",
+        ownerConfirmed: Boolean = false,
+        contentConfirmed: Boolean = false
     ): ImportTimetableResult {
         require(xnm > 0) { "学年起始年无效" }
         require(xqm.isNotBlank()) { "学期码不能为空" }
@@ -61,12 +63,18 @@ class ImportTimetableUseCase(
                 ExistingTimetablePolicy.OVERWRITE ->
                     existing ?: local.createTimetable(profileId, xnm, xqm, label, school.code, campusCode)
                 ExistingTimetablePolicy.CREATE_NEW ->
-                    local.createTimetable(profileId, xnm, xqm, newLabel(local, profileId, label), school.code, campusCode)
+                    local.createTimetable(profileId, xnm, xqm, label, school.code, campusCode)
             }
             createdForThisImport = policy == ExistingTimetablePolicy.CREATE_NEW || existing == null
         }
         return try {
-            val warnings = remote.import(timetable.id, selectedRemoteKeys)
+            val warnings = remote.import(
+                timetable.id,
+                selectedRemoteKeys,
+                // 新建课表本来就是用户刚发起的导入；属主/内容确认只用于覆盖已有课表。
+                ownerConfirmed = ownerConfirmed || createdForThisImport,
+                contentConfirmed = contentConfirmed || createdForThisImport
+            )
             ImportTimetableResult(timetable, warnings)
         } catch (error: Throwable) {
             if (createdForThisImport) local.deleteTimetable(timetable.id)
@@ -76,16 +84,4 @@ class ImportTimetableUseCase(
         }
     }
 
-    private suspend fun newLabel(
-        local: LocalTimetableRepository,
-        profileId: Long,
-        label: String
-    ): String {
-        val labels = local.getTimetables(profileId).map { it.label }.toSet()
-        val base = if (label.endsWith("（新建）")) label else "$label（新建）"
-        if (base !in labels) return base
-        var suffix = 2
-        while ("$base $suffix" in labels) suffix++
-        return "$base $suffix"
-    }
 }

@@ -26,10 +26,17 @@ class SchoolScheduleRouter(
 
     suspend fun import(
         timetableId: Long,
-        selectedRemoteKeys: Set<String>? = null
+        selectedRemoteKeys: Set<String>? = null,
+        ownerConfirmed: Boolean = false,
+        contentConfirmed: Boolean = false
     ): List<ParseWarning> {
         val school = local.getTimetable(timetableId).schoolCode
-        return provider(school).import(timetableId, selectedRemoteKeys)
+        return provider(school).import(
+            timetableId,
+            selectedRemoteKeys,
+            ownerConfirmed,
+            contentConfirmed
+        )
     }
 
     private fun provider(code: String): SchoolScheduleProvider =

@@ -48,6 +48,8 @@ interface CourseDao {
     @Query("DELETE FROM courses WHERE timetableId = :timetableId AND source NOT IN ('MANUAL', 'MIGRATED_LEGACY')") suspend fun deleteRemoteForTimetable(timetableId: Long)
     @Query("SELECT * FROM courses WHERE timetableId = :timetableId AND source NOT IN ('MANUAL', 'MIGRATED_LEGACY')")
     suspend fun getRemoteMasters(timetableId: Long): List<CourseEntity>
+    @Query("SELECT COUNT(*) FROM courses WHERE timetableId = :timetableId")
+    suspend fun countCourses(timetableId: Long): Int
 
     // ---- 时段扁平行（含课程主记录信息）----
     @Query(

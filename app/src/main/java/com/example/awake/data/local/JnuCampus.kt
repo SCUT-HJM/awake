@@ -1,14 +1,14 @@
 package com.example.awake.data.local
 
 /**
- * ���ϴ�ѧ��ͬУ��ʹ�õĽڴα�ź�ʱ�䡣
+ * 暨南大学不同校区使用的节次标号和时间。
  *
- * ���񷵻صĿγ̽ڴ���ʹ��ԭ��ţ����緬خУ������ 5��9����
- * �������Ҳ����ԭ��ţ��α���Ⱦʱ�����һһ��Ӧ��
+ * 教务返回的课程节次都使用原始编号，例如番禺校区跳过 5、9。
+ * 这里配置也使用原始编号，课表渲染时需要一一对应。
  */
 enum class JnuCampus(val displayName: String) {
-    MAIN("����У��"),
-    PANYU("��خУ��");
+    MAIN("本部校区"),
+    PANYU("番禺校区");
 
     val configs: List<PeriodConfigEntity>
         get() = when (this) {
@@ -44,4 +44,3 @@ enum class JnuCampus(val displayName: String) {
             )
         }
 }
-

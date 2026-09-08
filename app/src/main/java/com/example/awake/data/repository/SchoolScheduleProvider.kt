@@ -14,5 +14,10 @@ interface SchoolScheduleProvider {
     suspend fun academicTerms(): List<RemoteAcademicYear>
     suspend fun probeSessions(): List<com.example.awake.data.remote.SessionAvailability>
     suspend fun preview(xnm: Int, xqm: String): ScutSchedulePayload
-    suspend fun import(timetableId: Long, selectedRemoteKeys: Set<String>? = null): List<ParseWarning>
+    suspend fun import(
+        timetableId: Long,
+        selectedRemoteKeys: Set<String>? = null,
+        ownerConfirmed: Boolean = false,
+        contentConfirmed: Boolean = false
+    ): List<ParseWarning>
 }

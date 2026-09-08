@@ -380,6 +380,47 @@ fun TermImportScreen(
         )
     }
 
+    state.pendingSyncConfirmation?.let { request ->
+        val accountText = listOfNotNull(
+            request.ownerStudentName,
+            request.ownerStudentIdMasked
+        ).joinToString(" · ")
+        AlertDialog(
+            onDismissRequest = viewModel::cancelSyncConfirmation,
+            title = { Text("确认导入这份课表？") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (request.ownerRequired) {
+                        Text(
+                            "这是旧版导入的课表，还没有记录属主。教务返回的账号是" +
+                                "${accountText.ifBlank { "未知账号" }}。请确认它就是这份课表的主人。"
+                        )
+                    }
+                    if (request.contentRequired) {
+                        Text(
+                            if (request.ownerRequired) {
+                                "同时发现课表内容和教务端不一致，可能包含手动修改；确认后只替换教务同步课程，手动课程会保留。"
+                            } else {
+                                "发现课表内容和教务端不一致，可能包含手动修改。确认后只替换教务同步课程，手动课程会保留。"
+                            }
+                        )
+                    }
+                    Text(
+                        "取消不会更新课表。确认一次后，只要本地和教务内容都没有变化，就不会再询问。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = viewModel::cancelSyncConfirmation) { Text("取消") }
+            },
+            confirmButton = {
+                Button(onClick = { viewModel.confirmSyncConfirmation(onDone) }) { Text("确认导入") }
+            }
+        )
+    }
+
     // 覆盖模式：执行前的“确认替换当前课表”弹窗（添加模式不再出现任何覆盖相关弹窗）。
     state.conflictTimetable?.let { existing ->
         val pendingLabel = state.pendingTerms.firstOrNull()?.label

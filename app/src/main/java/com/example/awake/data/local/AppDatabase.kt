@@ -16,7 +16,7 @@ import com.example.awake.domain.model.CourseIdentity
         CourseWeekEntity::class,
         PeriodConfigEntity::class
     ],
-    version = 12,
+    version = 14,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -458,6 +458,30 @@ abstract class AppDatabase : RoomDatabase() {
                           AND p.period = 11 AND p.startTime = '20:50' AND p.endTime = '21:35'
                       )
                     """.trimIndent()
+                )
+            }
+        }
+
+        /** v13：课表记录属主学校/脱敏学号，同步前校验当前登录账号。 */
+        val MIGRATION_12_13 = object : Migration(12, 13) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE timetables ADD COLUMN ownerSchoolCode TEXT NOT NULL DEFAULT ''"
+                )
+                db.execSQL(
+                    "ALTER TABLE timetables ADD COLUMN ownerStudentIdMasked TEXT NOT NULL DEFAULT ''"
+                )
+            }
+        }
+
+        /** v14：记住上次同步内容确认时的两侧指纹，避免内容未变化时重复打扰。 */
+        val MIGRATION_13_14 = object : Migration(13, 14) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE timetables ADD COLUMN syncConfirmedLocalHash TEXT NOT NULL DEFAULT ''"
+                )
+                db.execSQL(
+                    "ALTER TABLE timetables ADD COLUMN syncConfirmedRemoteHash TEXT NOT NULL DEFAULT ''"
                 )
             }
         }

@@ -48,7 +48,12 @@ class JnuScheduleRepository(
         return client.fetchSchedule(xnm, xqm)
     }
 
-    override suspend fun import(timetableId: Long, selectedRemoteKeys: Set<String>?): List<ParseWarning> {
+    override suspend fun import(
+        timetableId: Long,
+        selectedRemoteKeys: Set<String>?,
+        ownerConfirmed: Boolean,
+        contentConfirmed: Boolean
+    ): List<ParseWarning> {
         val lock = importLocks.getOrPut(timetableId) { Mutex() }
         return lock.withLock {
             val timetable = local.getTimetable(timetableId)
@@ -61,7 +66,16 @@ class JnuScheduleRepository(
                 } ?: full
             }
             val mapped: MappedSchedule = mapper.map(payload, timetable.id, timetable.totalWeeks)
-            local.replaceRemoteCourses(timetable, mapped.courses, mapped.sections, mapped.weeks)
+            local.replaceRemoteCourses(
+                timetable,
+                mapped.courses,
+                mapped.sections,
+                mapped.weeks,
+                remoteStudentId = mapped.studentId,
+                remoteStudentName = mapped.studentName,
+                ownerConfirmed = ownerConfirmed,
+                contentConfirmed = contentConfirmed
+            )
             if (mapped.studentId != null || mapped.studentName != null) {
                 local.saveLoggedInProfile(mapped.studentName, mapped.studentId, SchoolCode.JNU.code)
             }

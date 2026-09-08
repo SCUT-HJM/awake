@@ -51,6 +51,8 @@ import com.example.awake.ui.theme.LocalDarkTheme
 
 private val GridLine = Color(0xFFD8E2E8)
 private val GridBackground = Color.Transparent
+private val EmptyPeriodBackgroundLight = Color(0xFFE1E7F5)
+private val EmptyPeriodBackgroundDark = Color(0xFF2B2930)
 private val TimeColumnWidth = 34.dp
 private val HeaderHeight = 40.dp
 private val DefaultRowHeight = 54.dp
@@ -326,7 +328,13 @@ private fun WeekGridPage(
                     .padding(start = TimeColumnWidth)
                     .offset(y = HeaderHeight + visualOffset)
                     .height(visualHeight)
-                    .background(Color(0xFFE1E7F5)),
+                    .background(
+                        if (LocalDarkTheme.current) {
+                            EmptyPeriodBackgroundDark
+                        } else {
+                            EmptyPeriodBackgroundLight
+                        }
+                    ),
                 contentAlignment = Alignment.Center
             ) {
                 Text(

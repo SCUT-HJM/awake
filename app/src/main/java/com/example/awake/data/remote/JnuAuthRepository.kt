@@ -135,9 +135,35 @@ class JnuWebViewCoordinator(
         webView.stopLoading()
     }
 
-    /** 仅清空暨大会话（内存 Cookie），不影响华工的已保存会话。 */
+    /** 仅清空暨大会话（内存和系统 Cookie），不影响华工的已保存会话。 */
     fun clear() {
         authenticatedNotified = false
+        val manager = CookieManager.getInstance()
+        manager.setAcceptCookie(true)
+        manager.flush()
+        val paths = (listOf("/", "/jwapp") + pathAncestors(SCHEDULE_API_PATH)).distinct()
+        val hosts = listOf(JnuSessionStore.JW_HOST, "jnu.edu.cn")
+        val names = mutableSetOf<String>()
+        paths.forEach { path ->
+            hosts.forEach { host ->
+                manager.getCookie("https://$host$path")
+                    ?.split(';')
+                    ?.map(String::trim)
+                    ?.forEach { item -> names.add(item.substringBefore('=').trim()) }
+            }
+        }
+        paths.forEach { path ->
+            names.filter(String::isNotBlank).forEach { name ->
+                hosts.forEach { host ->
+                    val domain = if (host == "jnu.edu.cn") "; Domain=.jnu.edu.cn" else ""
+                    manager.setCookie(
+                        "https://$host$path",
+                        "$name=; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Max-Age=0; Path=$path$domain"
+                    )
+                }
+            }
+        }
+        manager.flush()
         sessionStore.clear()
     }
 

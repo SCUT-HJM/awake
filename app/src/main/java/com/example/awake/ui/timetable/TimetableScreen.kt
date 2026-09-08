@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -93,7 +94,6 @@ fun TimetableScreen(
     onCourse: (Long) -> Unit,
     onAddCourse: (timetableId: Long, dayOfWeek: Int, startPeriod: Int) -> Unit
 ) {
-    val profile by viewModel.profile.collectAsStateWithLifecycle()
     val tables by viewModel.timetables.collectAsStateWithLifecycle()
     val selectedId by viewModel.selectedTimetableId.collectAsStateWithLifecycle()
     val selectedTimetable by viewModel.selectedTimetable.collectAsStateWithLifecycle()
@@ -108,15 +108,13 @@ fun TimetableScreen(
     val message by viewModel.message.collectAsStateWithLifecycle()
     val syncState by viewModel.syncState.collectAsStateWithLifecycle()
     val pendingSyncConfirm by viewModel.pendingSyncConfirm.collectAsStateWithLifecycle()
-    // 直连/VPN 登录完成后本地档案名称要等首次导入才会更新，因此登录状态
-    // 以进程内教务会话为准，档案名称仅作兜底（进程重启后会话丢失时使用）。
+    val pendingTimetableConfirm by viewModel.pendingTimetableConfirm.collectAsStateWithLifecycle()
+    // 登录状态只看进程内教务会话。退出登录必须立即生效，本地档案名不能兜底。
     val selectedSchoolCode = selectedTimetable?.schoolCode ?: "SCUT"
     val isLoggedIn = if (selectedSchoolCode == "JNU") {
-        jnuAuth.isAuthenticated() ||
-            (profile?.displayName?.isNotBlank() == true && profile?.displayName != "未登录")
+        jnuAuth.isAuthenticated()
     } else {
-        auth.isAuthenticated() ||
-            (profile?.displayName?.isNotBlank() == true && profile?.displayName != "未登录")
+        auth.isAuthenticated()
     }
     var showControlSheet by remember { mutableStateOf(false) }
     // 「+」与「创建课表」共用的模式选择弹窗。
@@ -135,7 +133,8 @@ fun TimetableScreen(
     }
 
     // 进入主界面且已有登录档案时自动检查会话并同步一次，用户仍可通过顶部按钮手动刷新。
-    LaunchedEffect(selectedId, isLoggedIn) {
+    // 只按登录状态触发一次自动同步；切换课表时不能拿旧课表去刷新，否则会误弹确认。
+    LaunchedEffect(isLoggedIn) {
         if (selectedId != null && isLoggedIn) viewModel.refresh()
     }
 
@@ -154,79 +153,94 @@ fun TimetableScreen(
     } else {
         Color(0xFFE9ECF8)
     }) { padding ->
-        Column(
+        Box(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(bottom = padding.calculateBottomPadding())
-                .statusBarsPadding(),
-            verticalArrangement = Arrangement.spacedBy(4.dp)
+                .statusBarsPadding()
         ) {
-            CompactTimetableHeader(
-                week = week,
-                isCurrentWeek = week == actualCurrentWeek,
-                date = formatWeekDate(selectedTimetable, week),
-                onImport = { showImportModeDialog = true },
-                onRefresh = viewModel::refresh,
-                refreshEnabled = syncState != TimetableSyncState.REFRESHING && selectedTimetable != null,
-                onMore = { showControlSheet = true },
-                onShare = {
-                    viewModel.exportJson { json ->
-                        val send = Intent(Intent.ACTION_SEND).apply {
-                            type = "text/plain"
-                            putExtra(
-                                Intent.EXTRA_SUBJECT,
-                                "${selectedTimetable?.label ?: "课表"} · Awake 分享"
-                            )
-                            putExtra(Intent.EXTRA_TEXT, json)
+            Column(
+                modifier = Modifier.fillMaxSize(),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                CompactTimetableHeader(
+                    week = week,
+                    isCurrentWeek = week == actualCurrentWeek,
+                    date = formatWeekDate(selectedTimetable, week),
+                    onImport = { showImportModeDialog = true },
+                    onRefresh = viewModel::refresh,
+                    refreshEnabled = syncState != TimetableSyncState.REFRESHING && selectedTimetable != null,
+                    onMore = { showControlSheet = true },
+                    onShare = {
+                        viewModel.exportJson { json ->
+                            val send = Intent(Intent.ACTION_SEND).apply {
+                                type = "text/plain"
+                                putExtra(
+                                    Intent.EXTRA_SUBJECT,
+                                    "${selectedTimetable?.label ?: "课表"} · Awake 分享"
+                                )
+                                putExtra(Intent.EXTRA_TEXT, json)
+                            }
+                            context.startActivity(Intent.createChooser(send, "分享课表 JSON"))
                         }
-                        context.startActivity(Intent.createChooser(send, "分享课表 JSON"))
-                    }
-                },
-                onSettings = onSettings
-            )
-
-            if (tables.isEmpty()) {
-                EmptyTimetableState(
-                    loggedIn = isLoggedIn,
-                    onLogin = { onLogin(selectedSchoolCode) },
-                    onImport = onImportAdd,
-                    modifier = Modifier.fillMaxSize()
-                )
-            } else {
-                SyncBanner(syncState, message, { onLogin(selectedSchoolCode) }, viewModel::refresh)
-                val pageSet = adjacentWeekPages?.takeIf { it.current.week == week }
-                val currentPage = pageSet?.current
-                val previousPage = pageSet?.previous
-                val nextPage = pageSet?.next
-                WeeklyTimetableGrid(
-                    // 当前页和相邻页同时渲染，拖动时下一页会跟手露出，而不是松手后突然切换。
-                    courses = currentPage?.let { if (showOtherWeeks) it.coursesThroughEnd else it.currentCourses }
-                        ?: if (showOtherWeeks) coursesThroughEnd else courses,
-                    currentWeek = week,
-                    totalWeeks = selectedTimetable?.totalWeeks ?: 30,
-                    currentWeekCourseIds = currentPage?.currentCourseIds
-                        ?: courses.mapTo(mutableSetOf()) { it.sectionId },
-                    previousCourses = previousPage?.let {
-                        if (showOtherWeeks) it.coursesThroughEnd else it.currentCourses
-                    }.orEmpty(),
-                    previousWeek = previousPage?.week ?: (week - 1),
-                    previousWeekCourseIds = previousPage?.currentCourseIds.orEmpty(),
-                    nextCourses = nextPage?.let {
-                        if (showOtherWeeks) it.coursesThroughEnd else it.currentCourses
-                    }.orEmpty(),
-                    nextWeek = nextPage?.week ?: (week + 1),
-                    nextWeekCourseIds = nextPage?.currentCourseIds.orEmpty(),
-                    periodConfigs = periodConfigs,
-                    periodsPerScreen = periodsPerScreen,
-                    onCourseClick = onCourse,
-                    onEmptyClick = { day, period ->
-                        selectedId?.let { onAddCourse(it, day, period) }
                     },
-                    onWeekSwipe = { delta -> viewModel.selectWeek(week + delta) },
-                    todayDayOfWeek = todayDayOfWeek,
+                    onSettings = onSettings
+                )
+
+                if (tables.isEmpty()) {
+                    EmptyTimetableState(
+                        loggedIn = isLoggedIn,
+                        onLogin = { onLogin(selectedSchoolCode) },
+                        onImport = onImportAdd,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                } else {
+                    val pageSet = adjacentWeekPages?.takeIf { it.current.week == week }
+                    val currentPage = pageSet?.current
+                    val previousPage = pageSet?.previous
+                    val nextPage = pageSet?.next
+                    WeeklyTimetableGrid(
+                        // 当前页和相邻页同时渲染，拖动时下一页会跟手露出，而不是松手后突然切换。
+                        courses = currentPage?.let { if (showOtherWeeks) it.coursesThroughEnd else it.currentCourses }
+                            ?: if (showOtherWeeks) coursesThroughEnd else courses,
+                        currentWeek = week,
+                        totalWeeks = selectedTimetable?.totalWeeks ?: 30,
+                        currentWeekCourseIds = currentPage?.currentCourseIds
+                            ?: courses.mapTo(mutableSetOf()) { it.sectionId },
+                        previousCourses = previousPage?.let {
+                            if (showOtherWeeks) it.coursesThroughEnd else it.currentCourses
+                        }.orEmpty(),
+                        previousWeek = previousPage?.week ?: (week - 1),
+                        previousWeekCourseIds = previousPage?.currentCourseIds.orEmpty(),
+                        nextCourses = nextPage?.let {
+                            if (showOtherWeeks) it.coursesThroughEnd else it.currentCourses
+                        }.orEmpty(),
+                        nextWeek = nextPage?.week ?: (week + 1),
+                        nextWeekCourseIds = nextPage?.currentCourseIds.orEmpty(),
+                        periodConfigs = periodConfigs,
+                        periodsPerScreen = periodsPerScreen,
+                        onCourseClick = onCourse,
+                        onEmptyClick = { day, period ->
+                            selectedId?.let { onAddCourse(it, day, period) }
+                        },
+                        onWeekSwipe = { delta -> viewModel.selectWeek(week + delta) },
+                        todayDayOfWeek = todayDayOfWeek,
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(horizontal = 8.dp)
+                    )
+                }
+            }
+            if (tables.isNotEmpty()) {
+                SyncBanner(
+                    state = syncState,
+                    message = message,
+                    onLogin = { onLogin(selectedSchoolCode) },
+                    onRetry = viewModel::refresh,
                     modifier = Modifier
-                        .weight(1f)
-                        .padding(horizontal = 8.dp)
+                        .align(Alignment.TopCenter)
+                        .padding(top = 66.dp)
+                        .padding(horizontal = 12.dp)
                 )
             }
         }
@@ -300,6 +314,47 @@ fun TimetableScreen(
         )
     }
 
+    pendingTimetableConfirm?.let { request ->
+        val accountText = listOfNotNull(
+            request.ownerStudentName,
+            request.ownerStudentIdMasked
+        ).joinToString(" · ")
+        AlertDialog(
+            onDismissRequest = viewModel::cancelTimetableSyncConfirm,
+            title = { Text("确认同步这份课表？") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (request.ownerRequired) {
+                        Text(
+                            "这是旧版导入的课表，还没有记录属主。教务返回的账号是" +
+                                "${accountText.ifBlank { "未知账号" }}。请确认它就是这份课表的主人。"
+                        )
+                    }
+                    if (request.contentRequired) {
+                        Text(
+                            if (request.ownerRequired) {
+                                "同时发现课表内容和教务端不一致，可能包含手动修改；确认后只替换教务同步课程，手动课程会保留。"
+                            } else {
+                                "发现课表内容和教务端不一致，可能包含手动修改。确认后只替换教务同步课程，手动课程会保留。"
+                            }
+                        )
+                    }
+                    Text(
+                        "取消不会更新课表。确认一次后，只要本地和教务内容都没有变化，就不会再询问。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = viewModel::cancelTimetableSyncConfirm) { Text("取消") }
+            },
+            confirmButton = {
+                Button(onClick = viewModel::confirmTimetableSync) { Text("确认同步") }
+            }
+        )
+    }
+
     if (showImportModeDialog) {
         AlertDialog(
             onDismissRequest = { showImportModeDialog = false },
@@ -350,7 +405,6 @@ fun TimetableScreen(
         )
     }
 }
-
 @Composable
 private fun CompactTimetableHeader(
     week: Int,
@@ -573,39 +627,43 @@ private fun EmptyTimetableState(
                 }
                 Button(onClick = onImport, modifier = Modifier.fillMaxWidth()) { Text("创建或导入课表") }
             }
+            }
         }
     }
-}
 
 @Composable
 private fun SyncBanner(
     state: TimetableSyncState,
     message: String?,
     onLogin: () -> Unit,
-    onRetry: () -> Unit
+    onRetry: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     when (state) {
         TimetableSyncState.IDLE -> Unit
-        TimetableSyncState.REFRESHING -> StatusBanner("正在同步，旧课表仍可查看…", Color(0xFF557A8A), showProgress = true)
-        TimetableSyncState.SUCCESS -> message?.let { StatusBanner(it, MaterialTheme.colorScheme.primary) }
+        TimetableSyncState.REFRESHING -> StatusBanner("正在同步，旧课表仍可查看…", Color(0xFF557A8A), showProgress = true, modifier = modifier)
+        TimetableSyncState.SUCCESS -> message?.let { StatusBanner(it, MaterialTheme.colorScheme.primary, modifier = modifier) }
         TimetableSyncState.OFFLINE -> StatusBanner(
             "当前显示本地课表，网络不可用；重试不会覆盖旧数据。",
             Color(0xFF9B6B2F),
             icon = Icons.Default.CloudOff,
-            action = onRetry
+            action = onRetry,
+            modifier = modifier
         )
         TimetableSyncState.SESSION_EXPIRED -> StatusBanner(
             "登录会话已失效，请重新登录后再同步。",
             MaterialTheme.colorScheme.error,
             icon = Icons.Default.ErrorOutline,
             action = onLogin,
-            actionLabel = "登录"
+            actionLabel = "登录",
+            modifier = modifier
         )
         TimetableSyncState.ERROR -> StatusBanner(
             message ?: "同步失败，已保留旧课表。",
             MaterialTheme.colorScheme.error,
             icon = Icons.Default.ErrorOutline,
-            action = onRetry
+            action = onRetry,
+            modifier = modifier
         )
     }
 }
@@ -617,22 +675,31 @@ private fun StatusBanner(
     icon: androidx.compose.ui.graphics.vector.ImageVector? = null,
     showProgress: Boolean = false,
     action: (() -> Unit)? = null,
-    actionLabel: String = "重试"
+    actionLabel: String = "重试",
+    modifier: Modifier = Modifier
 ) {
     Surface(
-        color = color.copy(alpha = 0.10f),
+        color = color.copy(alpha = 0.95f),
         shape = RoundedCornerShape(14.dp),
-        modifier = Modifier.fillMaxWidth()
+        modifier = modifier.fillMaxWidth(),
+        shadowElevation = 8.dp
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            if (showProgress) CircularProgressIndicator(modifier = Modifier.height(16.dp), strokeWidth = 2.dp)
-            icon?.let { Icon(it, contentDescription = null, tint = color) }
-            Text(text, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, color = color)
-            action?.let { TextButton(onClick = it) { Text(actionLabel, color = color) } }
+            if (showProgress) {
+                CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = Color.White)
+            }
+            icon?.let { Icon(it, contentDescription = null, tint = Color.White) }
+            Text(
+                text,
+                modifier = Modifier.weight(1f),
+                style = MaterialTheme.typography.bodySmall,
+                color = Color.White
+            )
+            action?.let { TextButton(onClick = it) { Text(actionLabel, color = Color.White) } }
         }
     }
 }
