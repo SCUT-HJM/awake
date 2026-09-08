@@ -260,6 +260,7 @@ fun TimetableScreen(
                 onWeekChange = viewModel::selectWeek,
                 onTimetableChange = viewModel::selectTimetable,
                 onRename = viewModel::renameTimetable,
+                onEditStartDate = viewModel::updateStartDate,
                 onDelete = viewModel::deleteTimetable,
                 onCreateTimetable = {
                     showControlSheet = false
@@ -471,6 +472,7 @@ private fun TimetableControlSheet(
     onWeekChange: (Int) -> Unit,
     onTimetableChange: (Long) -> Unit,
     onRename: (Long, String) -> Unit,
+    onEditStartDate: (Long, String) -> Unit,
     onDelete: (Long) -> Unit,
     onCreateTimetable: () -> Unit,
     onClose: () -> Unit
@@ -478,6 +480,8 @@ private fun TimetableControlSheet(
     var renameTarget by remember { mutableStateOf<TimetableEntity?>(null) }
     var deleteTarget by remember { mutableStateOf<TimetableEntity?>(null) }
     var renameText by rememberSaveable { mutableStateOf("") }
+    var startDateTarget by remember { mutableStateOf<TimetableEntity?>(null) }
+    var startDateText by rememberSaveable { mutableStateOf("") }
     Column(
         modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 4.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -502,6 +506,26 @@ private fun TimetableControlSheet(
                 )
                 Text(selectedTimetable?.label ?: "未选择学期课表", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text("本周 $courseCount 节课", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                if (selectedTimetable != null) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Text(
+                            "开学时间：${selectedTimetable.startDate ?: "未设置"}",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.weight(1f)
+                        )
+                        IconButton(onClick = {
+                            startDateTarget = selectedTimetable
+                            startDateText = selectedTimetable.startDate ?: ""
+                        }) {
+                            Icon(Icons.Default.Edit, contentDescription = "修改开学时间")
+                        }
+                    }
+                }
             }
         }
 
@@ -573,6 +597,35 @@ private fun TimetableControlSheet(
             text = { OutlinedTextField(value = renameText, onValueChange = { renameText = it }, label = { Text("课表名称") }, singleLine = true) },
             dismissButton = { TextButton(onClick = { renameTarget = null }) { Text("取消") } },
             confirmButton = { TextButton(onClick = { onRename(target.id, renameText); renameTarget = null }) { Text("保存") } }
+        )
+    }
+    startDateTarget?.let { target ->
+        AlertDialog(
+            onDismissRequest = { startDateTarget = null },
+            title = { Text("修改开学时间") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = startDateText,
+                        onValueChange = { startDateText = it },
+                        label = { Text("第一周周一日期") },
+                        supportingText = { Text("格式：yyyy-MM-dd") },
+                        singleLine = true
+                    )
+                    Text(
+                        "修改后课表会按新日期重新计算当前周次。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            },
+            dismissButton = { TextButton(onClick = { startDateTarget = null }) { Text("取消") } },
+            confirmButton = {
+                TextButton(onClick = {
+                    onEditStartDate(target.id, startDateText)
+                    startDateTarget = null
+                }) { Text("保存") }
+            }
         )
     }
     deleteTarget?.let { target ->

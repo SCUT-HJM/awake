@@ -244,6 +244,20 @@ class TimetableViewModel(
         }
     }
 
+    fun updateStartDate(id: Long, startDate: String) {
+        val normalized = startDate.trim()
+        val parsed = runCatching { java.time.LocalDate.parse(normalized) }.getOrNull()
+        if (parsed == null) {
+            _message.value = "日期格式应为 yyyy-MM-dd"
+            return
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            val timetable = local.getTimetableOrNull(id) ?: return@launch
+            local.updateTimetable(timetable.copy(startDate = normalized))
+            _message.value = "开学时间已更新"
+        }
+    }
+
     fun deleteTimetable(id: Long) {
         viewModelScope.launch(Dispatchers.IO) {
             val deletingCurrent = selectedTimetableId.value == id

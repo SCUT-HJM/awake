@@ -2,7 +2,9 @@ package com.example.awake.ui.settings
 
 import android.Manifest
 import android.app.Activity
+import android.appwidget.AppWidgetManager
 import android.content.Intent
+import android.content.ComponentName
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
@@ -84,6 +86,10 @@ import com.example.awake.data.repository.SchoolScheduleRouter
 import com.example.awake.data.remote.JnuAuthRepository
 import com.example.awake.data.remote.SessionAvailability
 import com.example.awake.data.remote.SessionAvailabilityState
+import com.example.awake.AwakeApplication
+import com.example.awake.data.widget.AwakeWidgetPrefs
+import com.example.awake.data.widget.AwakeWidgetProvider
+import com.example.awake.data.widget.AwakeWidgetUpdater
 import com.example.awake.data.repository.LocalTimetableRepository
 import com.example.awake.data.repository.ReminderCoordinator
 import com.example.awake.data.repository.ReminderSettingsStore
@@ -207,6 +213,8 @@ fun SettingsScreen(
     val showOtherWeeks by displaySettings.showOtherWeeks.collectAsStateWithLifecycle()
     val periodsPerScreen by displaySettings.periodsPerScreen.collectAsStateWithLifecycle()
     val currentThemeMode by themeMode.collectAsStateWithLifecycle()
+    val widgetPrefs = remember(context) { AwakeWidgetPrefs(context) }
+    var widgetScreenOffRefresh by remember { mutableStateOf(widgetPrefs.screenOffRefresh()) }
 
     fun selectPeriodTarget(target: PeriodConfigTarget) {
         val timetableId = selectedTimetableId
@@ -383,6 +391,33 @@ fun SettingsScreen(
         }
     }
 
+    fun addDesktopWidget() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+            status = "当前系统不支持一键添加，请在桌面长按空白处添加"
+            return
+        }
+        val added = runCatching {
+            AppWidgetManager.getInstance(context).requestPinAppWidget(
+                ComponentName(context, AwakeWidgetProvider::class.java),
+                null,
+                null
+            )
+        }.getOrDefault(false)
+        status = if (added) {
+            "已在系统桌面请求添加小组件，请在弹窗中确认"
+        } else {
+            "当前桌面不支持一键添加，请长按桌面空白处添加"
+        }
+    }
+
+    fun setWidgetScreenOffRefresh(enabled: Boolean) {
+        widgetPrefs.setScreenOffRefresh(enabled)
+        widgetScreenOffRefresh = enabled
+        (context.applicationContext as? AwakeApplication)?.refreshWidgetRefreshController()
+        if (enabled) AwakeWidgetUpdater.requestUpdate(context)
+        status = if (enabled) "小组件息屏刷新已开启" else "小组件息屏刷新已关闭"
+    }
+
     Scaffold(topBar = {
         CenterAlignedTopAppBar(
             title = {
@@ -453,6 +488,11 @@ fun SettingsScreen(
                         title = "课表显示",
                         subtitle = if (showOtherWeeks) "非本周课程半透明显示 · 已开启" else "只显示本周课程 · 已关闭",
                         onClick = { section = SettingsSection.DISPLAY }
+                    )
+                    SettingsOption(
+                        title = "小组件设置",
+                        subtitle = "桌面添加 · 息屏刷新${if (widgetScreenOffRefresh) "已开启" else "已关闭"}",
+                        onClick = { section = SettingsSection.WIDGET }
                     )
                     SettingsOption(
                         title = "课表纵向拉伸",
@@ -531,6 +571,40 @@ fun SettingsScreen(
                                 Text("${option} 分钟")
                             }
                         }
+                    }
+                }
+
+                SettingsSection.WIDGET -> {
+                    Text("小组件", style = MaterialTheme.typography.titleLarge)
+                    Text(
+                        "添加桌面小组件后，刷新会把浏览过的周次按当天日期拉回当前周。",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Button(
+                        onClick = ::addDesktopWidget,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Default.Add, contentDescription = null)
+                        Text("添加桌面小组件")
+                    }
+                    Text("刷新设置", style = MaterialTheme.typography.titleMedium)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("息屏刷新")
+                            Text(
+                                "屏幕关闭时回到当前周",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = widgetScreenOffRefresh,
+                            onCheckedChange = ::setWidgetScreenOffRefresh
+                        )
                     }
                 }
 
@@ -1091,6 +1165,7 @@ private enum class SettingsSection(val title: String) {
     REMINDERS("课前提醒"),
     PERIODS("上课时间"),
     DISPLAY("课表显示"),
+    WIDGET("小组件设置"),
     APPEARANCE("深色模式"),
     ACCOUNT("会话与本地数据"),
     UPDATE("检查更新")

@@ -43,7 +43,9 @@ class AwakeWidgetProvider : AppWidgetProvider() {
             try {
                 // 串行化渲染：避免与其它组件/周次切换的渲染交错（读-改-写竞争导致周信息错乱）。
                 updateMutex.withLock {
-                    appWidgetIds.forEach { widgetId -> buildAndUpdate(context, manager, widgetId) }
+                    appWidgetIds.forEach { widgetId ->
+                        buildAndUpdate(context, manager, widgetId)
+                    }
                 }
             } finally {
                 pendingResult.finish()
@@ -57,6 +59,32 @@ class AwakeWidgetProvider : AppWidgetProvider() {
     }
 
     override fun onReceive(context: Context, intent: Intent) {
+        if (
+            intent.action == AppWidgetManager.ACTION_APPWIDGET_UPDATE &&
+            intent.getBooleanExtra(AwakeWidgetUpdater.EXTRA_RESET_TO_CURRENT_WEEK, false)
+        ) {
+            val widgetIds = intent.getIntArrayExtra(AppWidgetManager.EXTRA_APPWIDGET_IDS)
+                ?.filter { it >= 0 }
+                ?.toIntArray()
+            if (widgetIds == null || widgetIds.isEmpty()) return
+            val pendingResult = goAsync()
+            CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+                try {
+                    updateMutex.withLock {
+                        val manager = AppWidgetManager.getInstance(context)
+                        val prefs = AwakeWidgetPrefs(context)
+                        widgetIds.forEach { widgetId ->
+                            prefs.resetWeek(widgetId)
+                            buildAndUpdate(context, manager, widgetId)
+                        }
+                    }
+                } finally {
+                    pendingResult.finish()
+                }
+            }
+            return
+        }
+
         val delta = when (intent.action) {
             ACTION_WEEK_PREV -> -1
             ACTION_WEEK_NEXT -> 1

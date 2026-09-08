@@ -31,6 +31,7 @@ import com.example.awake.data.repository.TimetableDisplaySettingsStore
 import com.example.awake.data.repository.ThemeModeStore
 import com.example.awake.data.repository.ScutScheduleRepository
 import com.example.awake.data.widget.AwakeWidgetUpdater
+import com.example.awake.data.widget.AwakeWidgetRefreshController
 import com.example.awake.ui.theme.ThemeMode
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -41,6 +42,7 @@ import kotlinx.coroutines.launch
 class AwakeApplication : Application() {
     lateinit var container: AppContainer
         private set
+    private lateinit var widgetRefreshController: AwakeWidgetRefreshController
 
     override fun onCreate() {
         super.onCreate()
@@ -48,11 +50,17 @@ class AwakeApplication : Application() {
             WebView.setWebContentsDebuggingEnabled(true)
         }
         container = AppContainer(this)
+        widgetRefreshController = AwakeWidgetRefreshController(this)
+        widgetRefreshController.applySettings()
         NotificationChannels.ensureReminderChannel(this)
         container.applicationScope.launch {
             container.legacyImporter.expandMissingWeeks()
             container.reminderCoordinator.rescheduleSelected()
         }
+    }
+
+    fun refreshWidgetRefreshController() {
+        widgetRefreshController.applySettings()
     }
 }
 

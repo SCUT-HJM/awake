@@ -25,6 +25,18 @@ class AwakeWidgetPrefs(context: Context) {
         prefs.edit().putInt(KEY_WEEK + widgetId, week.coerceIn(1, 30)).apply()
     }
 
+    /** 数据刷新后丢掉用户浏览的周次，让组件按当天日期回到当前周。 */
+    fun resetWeek(widgetId: Int) {
+        prefs.edit().remove(KEY_WEEK + widgetId).apply()
+    }
+
+    /** 息屏刷新：屏幕关闭时把浏览过的周次拉回当前周。 */
+    fun screenOffRefresh(): Boolean = prefs.getBoolean(KEY_SCREEN_OFF_REFRESH, true)
+
+    fun setScreenOffRefresh(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_SCREEN_OFF_REFRESH, enabled).apply()
+    }
+
     fun clear(widgetId: Int) {
         prefs.edit()
             .remove(KEY_TABLE + widgetId)
@@ -35,5 +47,6 @@ class AwakeWidgetPrefs(context: Context) {
     private companion object {
         const val KEY_TABLE = "widget_timetable_"
         const val KEY_WEEK = "widget_week_"
+        const val KEY_SCREEN_OFF_REFRESH = "screen_off_refresh"
     }
 }
