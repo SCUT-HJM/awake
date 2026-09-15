@@ -4,6 +4,7 @@ import java.io.IOException
 import java.util.concurrent.TimeUnit
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import org.json.JSONArray
 import org.json.JSONObject
 
 /** GitHub Releases 上最新（非预发布）版本的信息。 */
@@ -49,10 +50,34 @@ class GitHubReleaseChecker(
         }
     }
 
+    /** 拉取最近的正式 Release 列表，用于汇总跨版本更新说明。 */
+    @Throws(IOException::class)
+    fun fetchReleases(limit: Int = 100): List<GitHubRelease> {
+        val request = Request.Builder()
+            .url("https://api.github.com/repos/$repo/releases?per_page=${limit.coerceIn(1, 100)}")
+            .header("Accept", "application/vnd.github+json")
+            .header("User-Agent", "Awake-Android")
+            .build()
+        client.newCall(request).execute().use { response ->
+            val text = response.body?.string().orEmpty()
+            if (!response.isSuccessful) {
+                throw IOException("GitHub 返回 ${response.code}${if (text.isBlank()) "" else "：${text.take(120)}"}")
+            }
+            val array = JSONArray(text)
+            return (0 until array.length())
+                .mapNotNull { index -> array.optJSONObject(index) }
+                .filterNot { it.optBoolean("prerelease") }
+                .map(::parseRelease)
+        }
+    }
+
     companion object {
         const val DEFAULT_REPO = "SCUT-HJM/awake"
 
-        private val METADATA_LINE = Regex("""^\s*(versionName|versionCode|apk-sha256)\s*[:：]""")
+        private val METADATA_LINE = Regex(
+            """^\s*(versionName|versionCode|apk-sha256)\s*[:：]""",
+            setOf(RegexOption.MULTILINE)
+        )
         private val VERSION_NAME_LINE = Regex("""(?m)^\s*versionName\s*[:：]\s*(\S+)""")
         private val VERSION_CODE_LINE = Regex("""(?m)^\s*versionCode\s*[:：]\s*(\d+)""")
         private val APK_SHA256_LINE = Regex("""(?m)^\s*apk-sha256\s*[:：]\s*([0-9A-Fa-f]{32,128})""")
@@ -87,7 +112,7 @@ class GitHubReleaseChecker(
             }.getOrNull()
             // 去掉约定元信息行，保留更新说明供界面展示。
             val notes = body.lines()
-                .filterNot { METADATA_LINE.matches(it) }
+                .filterNot { METADATA_LINE.containsMatchIn(it) }
                 .joinToString("\n")
                 .trim()
             return GitHubRelease(

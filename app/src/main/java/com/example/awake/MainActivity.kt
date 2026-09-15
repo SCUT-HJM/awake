@@ -13,6 +13,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val container = (application as AwakeApplication).container
+        container.updateManager.checkMajorUpdate()
         setContent {
             val themeMode by container.themeModeFlow.collectAsState()
             AwakeTheme(themeMode = themeMode) { AppNavHost(container) }
@@ -21,6 +22,9 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        if ((application as AwakeApplication).container.updateManager.state.value.readyInstall) {
+            (application as AwakeApplication).container.updateManager.installDownloaded()
+        }
         AwakeWidgetUpdater.requestUpdate(this)
     }
 }

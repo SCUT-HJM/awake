@@ -67,6 +67,10 @@ class AwakeApplication : Application() {
 class AppContainer(context: android.content.Context) {
     private val appContext = context
     val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    val updateManager = com.example.awake.data.update.AppUpdateManager(
+        appContext,
+        scope = applicationScope
+    )
     val database: AppDatabase = Room.databaseBuilder(context, AppDatabase::class.java, "course.db")
         .addMigrations(AppDatabase.LEGACY_MIGRATION_2_3)
         .addMigrations(AppDatabase.MIGRATION_3_4)

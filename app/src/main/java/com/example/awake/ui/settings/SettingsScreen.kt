@@ -97,6 +97,7 @@ import com.example.awake.domain.model.SchoolCode
 import com.example.awake.data.repository.TimetableSelectionStore
 import com.example.awake.data.repository.TimetableDisplaySettingsStore
 import com.example.awake.data.update.ApkUpdateSupport
+import com.example.awake.data.update.AppUpdateManager
 import com.example.awake.data.update.GitHubRelease
 import com.example.awake.data.update.GitHubReleaseChecker
 import com.example.awake.ui.theme.ThemeMode
@@ -119,6 +120,7 @@ fun SettingsScreen(
     themeMode: StateFlow<ThemeMode>,
     onThemeModeChange: (ThemeMode) -> Unit,
     onBack: () -> Unit,
+    updateManager: AppUpdateManager,
     onLogin: (String) -> Unit
 ) {
     val context = LocalContext.current
@@ -141,28 +143,16 @@ fun SettingsScreen(
     var sessionStates by remember { mutableStateOf<Map<SchoolCode, List<SessionAvailability>>>(emptyMap()) }
     var checkingSessions by remember { mutableStateOf(false) }
     var showClearDataDialog by remember { mutableStateOf(false) }
-    // 更新检测：通过 GitHub Releases API 检查，纯手动触发，不自动轮询。
-    var currentVersionName by remember { mutableStateOf("") }
-    var currentVersionCode by remember { mutableStateOf(0) }
-    var updateChecking by remember { mutableStateOf(false) }
-    var updateStatus by remember { mutableStateOf<String?>(null) }
-    var latestRelease by remember { mutableStateOf<GitHubRelease?>(null) }
-    var showUpdateDialog by remember { mutableStateOf(false) }
-    // 应用内下载并安装：进度 0..1，完成后自动调用系统安装器。
-    var updateDownloading by remember { mutableStateOf(false) }
-    var downloadProgress by remember { mutableStateOf(0f) }
-    val updateChecker = remember { GitHubReleaseChecker() }
-    LaunchedEffect(Unit) {
-        val packageInfo = runCatching {
-            context.packageManager.getPackageInfo(context.packageName, 0)
-        }.getOrNull()
-        currentVersionName = packageInfo?.versionName ?: ""
-        currentVersionCode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            packageInfo?.longVersionCode?.toInt() ?: 0
-        } else {
-            packageInfo?.versionCode ?: 0
-        }
-    }
+    var showManualWidgetDialog by remember { mutableStateOf(false) }
+    val updateState by updateManager.state.collectAsStateWithLifecycle()
+    val currentVersionName = updateState.currentVersionName
+    val currentVersionCode = updateState.currentVersionCode
+    val updateChecking = updateState.checking
+    val updateStatus = updateState.status
+    val latestRelease = updateState.latest
+    val showUpdateDialog = updateState.showUpdateDialog
+    val updateDownloading = updateState.downloading
+    val downloadProgress = updateState.downloadProgress
 
     LaunchedEffect(periodTarget) {
         val loaded = withContext(Dispatchers.IO) {
@@ -210,6 +200,12 @@ fun SettingsScreen(
     }
 
     var section by remember { mutableStateOf(SettingsSection.OVERVIEW) }
+    LaunchedEffect(updateState.openUpdateRequested) {
+        if (updateState.openUpdateRequested) {
+            section = SettingsSection.UPDATE
+            updateManager.consumeOpenUpdateRequest()
+        }
+    }
     val showOtherWeeks by displaySettings.showOtherWeeks.collectAsStateWithLifecycle()
     val periodsPerScreen by displaySettings.periodsPerScreen.collectAsStateWithLifecycle()
     val currentThemeMode by themeMode.collectAsStateWithLifecycle()
@@ -281,32 +277,16 @@ fun SettingsScreen(
     }
 
     fun checkUpdate() {
-        if (updateChecking) return
-        scope.launch {
-            updateChecking = true
-            updateStatus = "正在检查更新…"
-            runCatching { withContext(Dispatchers.IO) { updateChecker.fetchLatestRelease() } }
-                .onSuccess { release ->
-                    latestRelease = release
-                    if (GitHubReleaseChecker.hasUpdate(release.versionCode, currentVersionCode)) {
-                        updateStatus = "发现新版本 ${release.versionName}（当前 $currentVersionName）"
-                        showUpdateDialog = true
-                    } else {
-                        updateStatus = "已是最新版本（$currentVersionName）"
-                    }
-                }
-                .onFailure { error ->
-                    updateStatus = "检查失败：${error.message ?: "网络异常"}。可手动访问 github.com/SCUT-HJM/awake/releases"
-                }
-            updateChecking = false
-        }
+        updateManager.checkUpdate()
     }
 
     fun openInBrowser(url: String) {
         val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         runCatching { context.startActivity(Intent.createChooser(intent, "打开链接")) }
-            .onFailure { updateStatus = "无法打开浏览器：${it.message ?: "未知错误"}" }
+            .onFailure {
+                // 打开浏览器失败只影响这条旁路；主下载状态仍在 updateManager 中。
+            }
     }
 
     /** 应用内下载新版 APK（带进度与 SHA-256 校验），完成后自动启动系统安装器。 */
@@ -316,39 +296,7 @@ fun SettingsScreen(
             openInBrowser(release.pageUrl)
             return
         }
-        if (updateDownloading) return
-        scope.launch {
-            updateDownloading = true
-            downloadProgress = 0f
-            showUpdateDialog = false
-            updateStatus = "正在下载 ${release.versionName} …"
-            runCatching {
-                withContext(Dispatchers.IO) {
-                    ApkUpdateSupport.downloadApk(
-                        context = context,
-                        url = url,
-                        expectedSha256 = release.apkSha256
-                    ) { done, total ->
-                        if (total > 0) {
-                            downloadProgress = (done.toFloat() / total).coerceIn(0f, 1f)
-                        }
-                    }
-                }
-            }.onSuccess { file ->
-                downloadProgress = 1f
-                updateStatus = "下载完成，正在启动系统安装…"
-                runCatching { ApkUpdateSupport.installApk(context, file) }
-                    .onSuccess {
-                        updateStatus = "已启动系统安装：请在系统弹窗中确认"
-                    }
-                    .onFailure { error ->
-                        updateStatus = "启动安装失败：${error.message ?: "未找到系统安装器"}。可改用浏览器下载"
-                    }
-            }.onFailure { error ->
-                updateStatus = "下载失败：${error.message ?: "网络异常"}。可改用浏览器下载"
-            }
-            updateDownloading = false
-        }
+        updateManager.startDownload(release)
     }
 
     LaunchedEffect(section) {
@@ -393,7 +341,7 @@ fun SettingsScreen(
 
     fun addDesktopWidget() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
-            status = "当前系统不支持一键添加，请在桌面长按空白处添加"
+            showManualWidgetDialog = true
             return
         }
         val added = runCatching {
@@ -403,10 +351,21 @@ fun SettingsScreen(
                 null
             )
         }.getOrDefault(false)
-        status = if (added) {
-            "已在系统桌面请求添加小组件，请在弹窗中确认"
+        if (added) {
+            status = "已在系统桌面请求添加小组件，请在弹窗中确认"
         } else {
-            "当前桌面不支持一键添加，请长按桌面空白处添加"
+            showManualWidgetDialog = true
+        }
+    }
+
+    fun openHomeForWidget() {
+        runCatching {
+            context.startActivity(Intent(Intent.ACTION_MAIN).apply {
+                addCategory(Intent.CATEGORY_HOME)
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            })
+        }.onFailure {
+            status = "无法打开桌面，请手动返回桌面后长按空白处添加"
         }
     }
 
@@ -965,6 +924,23 @@ fun SettingsScreen(
                             ) {
                                 Text(if (updateChecking) "正在检查…" else "检查更新")
                             }
+                            latestRelease
+                                ?.takeIf {
+                                    GitHubReleaseChecker.hasUpdate(it.versionCode, currentVersionCode)
+                                }
+                                ?.let { release ->
+                                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        Text(
+                                            "${release.versionName} 更新内容",
+                                            style = MaterialTheme.typography.titleSmall
+                                        )
+                                        Text(
+                                            release.notes,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
                             if (updateDownloading) {
                                 LinearProgressIndicator(
                                     progress = { downloadProgress },
@@ -985,7 +961,7 @@ fun SettingsScreen(
                     latestRelease?.let { release ->
                         if (GitHubReleaseChecker.hasUpdate(release.versionCode, currentVersionCode) && !showUpdateDialog) {
                             OutlinedButton(
-                                onClick = { showUpdateDialog = true },
+                                onClick = { updateManager.showUpdateDialog() },
                                 enabled = !updateDownloading,
                                 modifier = Modifier.fillMaxWidth()
                             ) {
@@ -1032,9 +1008,40 @@ fun SettingsScreen(
         )
     }
 
+    if (showManualWidgetDialog) {
+        AlertDialog(
+            onDismissRequest = { showManualWidgetDialog = false },
+            title = { Text("手动添加小组件") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("当前桌面不支持一键添加。请回到桌面后：")
+                    Text("1. 长按桌面空白处，进入小组件/添加工具")
+                    Text("2. 找到 Awake 课表")
+                    Text("3. 长按或拖动组件到桌面")
+                    Text(
+                        "小米/HyperOS：长按桌面空白处 → 小组件 → 搜索 Awake",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showManualWidgetDialog = false }) { Text("知道了") }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showManualWidgetDialog = false
+                        openHomeForWidget()
+                    }
+                ) { Text("打开桌面") }
+            }
+        )
+    }
+
     latestRelease?.takeIf { showUpdateDialog }?.let { release ->
         AlertDialog(
-            onDismissRequest = { showUpdateDialog = false },
+            onDismissRequest = { updateManager.dismissUpdateDialog() },
             title = { Text("发现新版本 ${release.versionName}") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1045,13 +1052,13 @@ fun SettingsScreen(
                     )
                     TextButton(
                         onClick = {
-                            showUpdateDialog = false
+                            updateManager.dismissUpdateDialog()
                             openInBrowser(release.apkUrl ?: release.pageUrl)
                         }
                     ) { Text("改用浏览器下载") }
                 }
             },
-            dismissButton = { TextButton(onClick = { showUpdateDialog = false }) { Text("稍后") } },
+            dismissButton = { TextButton(onClick = { updateManager.dismissUpdateDialog() }) { Text("稍后") } },
             confirmButton = {
                 Button(
                     onClick = { startDownloadAndInstall(release) },

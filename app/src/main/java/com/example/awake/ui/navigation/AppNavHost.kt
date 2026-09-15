@@ -1,6 +1,16 @@
 package com.example.awake.ui.navigation
 
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -34,6 +44,7 @@ import com.example.awake.ui.timetable.TimetableViewModelFactory
 @Composable
 fun AppNavHost(container: AppContainer) {
     val navController = rememberNavController()
+    val updateState by container.updateManager.state.collectAsState()
     val observe = ObserveTimetableUseCase(container.localRepository)
     val refresh = RefreshTimetableUseCase(container.scheduleRouter)
     val importer = ImportTimetableUseCase(container.localRepository, container.scheduleRouter)
@@ -147,6 +158,7 @@ fun AppNavHost(container: AppContainer) {
                 themeMode = container.themeModeFlow,
                 onThemeModeChange = container::setThemeMode,
                 onBack = { navController.popBackStack() },
+                updateManager = container.updateManager,
                 onLogin = { school -> navController.navigate(Routes.login(school, "timetable")) }
             )
         }
@@ -197,5 +209,34 @@ fun AppNavHost(container: AppContainer) {
                 onDone = { navController.popBackStack(Routes.TIMETABLE, false) }
             )
         }
+    }
+
+    if (updateState.showMajorDialog) {
+        AlertDialog(
+            onDismissRequest = { container.updateManager.dismissMajorDialog() },
+            title = { Text("发现新版本") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("更新内容：", style = MaterialTheme.typography.titleSmall)
+                    Text(
+                        updateState.majorNotes,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { container.updateManager.dismissMajorDialog() }) {
+                    Text("稍后")
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        container.updateManager.dismissMajorDialog()
+                        navController.navigate(Routes.SETTINGS) { launchSingleTop = true }
+                    }
+                ) { Text("前往更新") }
+            }
+        )
     }
 }
