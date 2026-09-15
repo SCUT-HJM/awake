@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.awake.data.local.CourseSlotEntity
 import com.example.awake.data.local.TimetableEntity
+import com.example.awake.data.widget.currentWeekOf
 import com.example.awake.data.remote.ScutHttpException
 import com.example.awake.data.remote.ScutAccessMode
 import com.example.awake.data.remote.SessionAvailability
@@ -152,12 +153,8 @@ class TimetableViewModel(
                 .filterNotNull()
                 .distinctUntilChanged { old, new -> old.id == new.id && old.startDate == new.startDate }
                 .collect { timetable ->
-                    val startDate = timetable.startDate ?: return@collect
-                    currentWeek.value = runCatching {
-                        java.time.temporal.ChronoUnit.WEEKS.between(
-                            java.time.LocalDate.parse(startDate), java.time.LocalDate.now()
-                        ).toInt() + 1
-                    }.getOrNull()?.coerceIn(1, 30) ?: 1
+                        // 开学日期未设置时保持第 1 周，用户仍可浏览和手动编辑课程。
+                        currentWeek.value = currentWeekOf(timetable) ?: 1
                 }
         }
     }

@@ -67,19 +67,10 @@ import com.example.awake.ui.components.WeeklyTimetableGrid
 import com.example.awake.ui.theme.LocalDarkTheme
 import java.text.SimpleDateFormat
 import java.time.LocalDate
-import java.time.temporal.ChronoUnit
 import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 import kotlin.math.roundToInt
-
-/** 由学期第一周日期推算今天所在周；无法推算时返回 null。 */
-internal fun currentWeekOf(timetable: TimetableEntity?): Int? {
-    val startDate = timetable?.startDate ?: return null
-    return runCatching {
-        ChronoUnit.WEEKS.between(LocalDate.parse(startDate), LocalDate.now()).toInt() + 1
-    }.getOrNull()?.coerceIn(1, 30)
-}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -123,7 +114,7 @@ fun TimetableScreen(
 
     // 推算真实“当前周”：默认定位与本周标记共用。
     val actualCurrentWeek = remember(selectedTimetable?.id, selectedTimetable?.startDate) {
-        currentWeekOf(selectedTimetable)
+        com.example.awake.data.widget.currentWeekOf(selectedTimetable)
     }
     // 查看本周时标记今天所在列（周一=1…周日=7），用于表头加深刻画。
     val todayDayOfWeek = if (actualCurrentWeek != null && week == actualCurrentWeek) {

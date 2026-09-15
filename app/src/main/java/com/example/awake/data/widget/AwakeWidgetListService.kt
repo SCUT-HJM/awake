@@ -14,7 +14,6 @@ import com.example.awake.data.repository.TimetableDisplaySettingsStore
 import com.example.awake.domain.parser.WeekExpressionParser
 import com.example.awake.ui.components.weekParityLabel
 import java.time.LocalDate
-import java.time.temporal.ChronoUnit
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 
@@ -98,7 +97,7 @@ class AwakeWidgetListService : RemoteViewsService() {
             val totalWeeks = timetable.totalWeeks.coerceIn(1, 30)
             this.totalWeeks = totalWeeks
             val storedWeek = prefs.week(widgetId)
-            val week = if (storedWeek in 1..totalWeeks) storedWeek else currentWeekOf(timetable)
+            val week = if (storedWeek in 1..totalWeeks) storedWeek else currentWeekOf(timetable) ?: 1
             viewedWeek = week
             // 候选课程与 App 内完全同语义：
             // - 「显示非本周」开（默认）：本周或未来仍有课的时段（observeSlotsThroughEnd）；
@@ -469,9 +468,3 @@ private fun earliestWeek(raw: String): Int =
 private fun latestWeek(raw: String): Int =
     Regex("\\d+").findAll(raw).mapNotNull { it.value.toIntOrNull() }.maxOrNull() ?: 0
 
-private fun currentWeekOf(timetable: TimetableEntity): Int {
-    val startDate = timetable.startDate ?: return 1
-    return runCatching {
-        ChronoUnit.WEEKS.between(LocalDate.parse(startDate), LocalDate.now()).toInt() + 1
-    }.getOrNull()?.coerceIn(1, 30) ?: 1
-}

@@ -15,7 +15,6 @@ import com.example.awake.data.repository.LocalTimetableRepository
 import com.example.awake.data.repository.TimetableSelectionStore
 import com.example.awake.ui.widget.AwakeWidgetConfigActivity
 import java.time.LocalDate
-import java.time.temporal.ChronoUnit
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -106,7 +105,8 @@ class AwakeWidgetProvider : AppWidgetProvider() {
                     val prefs = AwakeWidgetPrefs(context)
                     val timetable = resolveTimetable(local, app?.container?.timetableSelectionStore, prefs, widgetId)
                     val totalWeeks = timetable?.totalWeeks?.coerceIn(1, 30) ?: 30
-                    val baseWeek = prefs.week(widgetId).takeIf { it in 1..30 } ?: currentWeekOf(timetable)
+                    val baseWeek = prefs.week(widgetId).takeIf { it in 1..30 }
+                        ?: currentWeekOf(timetable) ?: 1
                     prefs.setWeek(widgetId, (baseWeek + delta).coerceIn(1, totalWeeks))
                     buildAndUpdate(context, AppWidgetManager.getInstance(context), widgetId)
                 }
@@ -183,10 +183,10 @@ class AwakeWidgetProvider : AppWidgetProvider() {
 
             val totalWeeks = timetable.totalWeeks.coerceIn(1, 30)
             val storedWeek = prefs.week(widgetId)
-            val week = if (storedWeek in 1..totalWeeks) storedWeek else {
-                currentWeekOf(timetable).also { prefs.setWeek(widgetId, it) }
-            }
-            val isCurrentWeek = week == currentWeekOf(timetable)
+            val actualWeek = currentWeekOf(timetable)
+            val week = if (storedWeek in 1..totalWeeks) storedWeek else actualWeek ?: 1
+            if (week != storedWeek) prefs.setWeek(widgetId, week)
+            val isCurrentWeek = actualWeek != null && week == actualWeek
             views.setTextViewText(R.id.widget_title, "第 $week 周 · ${timetable.label}")
             views.setTextViewText(
                 R.id.widget_subtitle,
@@ -299,15 +299,6 @@ class AwakeWidgetProvider : AppWidgetProvider() {
         val end = start.plusDays(6)
         "${start.monthValue}/${start.dayOfMonth} – ${end.monthValue}/${end.dayOfMonth}"
     }.getOrDefault("")
-
-    private fun currentWeekOf(
-        timetable: com.example.awake.data.local.TimetableEntity?
-    ): Int {
-        val startDate = timetable?.startDate ?: return 1
-        return runCatching {
-            ChronoUnit.WEEKS.between(LocalDate.parse(startDate), LocalDate.now()).toInt() + 1
-        }.getOrNull()?.coerceIn(1, 30) ?: 1
-    }
 
     private companion object {
         const val ACTION_WEEK_PREV = "com.example.awake.widget.WEEK_PREV"
