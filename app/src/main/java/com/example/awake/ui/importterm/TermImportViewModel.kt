@@ -501,7 +501,8 @@ class TermImportViewModel(
             _uiState.value = _uiState.value.copy(status = "请填写有效的学年、学期码和课表名称")
             return false
         }
-        if (runCatching { LocalDate.parse(startDate) }.isFailure) {
+        val parsedStartDate = com.example.awake.data.widget.parseTimetableDate(startDate)
+        if (parsedStartDate == null) {
             _uiState.value = _uiState.value.copy(status = "第一周日期格式应为 yyyy-MM-dd")
             return false
         }
@@ -515,7 +516,7 @@ class TermImportViewModel(
             title = label,
             subtitle = "自定义学期 · xnm=$xnm，xqm=$xqm",
             label = label,
-            startDate = startDate,
+            startDate = parsedStartDate.toString(),
             selected = true,
             builtIn = false,
             school = _uiState.value.selectedSchool

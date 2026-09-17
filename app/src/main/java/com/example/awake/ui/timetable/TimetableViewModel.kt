@@ -243,14 +243,14 @@ class TimetableViewModel(
 
     fun updateStartDate(id: Long, startDate: String) {
         val normalized = startDate.trim()
-        val parsed = runCatching { java.time.LocalDate.parse(normalized) }.getOrNull()
+        val parsed = com.example.awake.data.widget.parseTimetableDate(normalized)
         if (parsed == null) {
             _message.value = "日期格式应为 yyyy-MM-dd"
             return
         }
         viewModelScope.launch(Dispatchers.IO) {
             val timetable = local.getTimetableOrNull(id) ?: return@launch
-            local.updateTimetable(timetable.copy(startDate = normalized))
+            local.updateTimetable(timetable.copy(startDate = parsed.toString()))
             _message.value = "开学时间已更新"
         }
     }

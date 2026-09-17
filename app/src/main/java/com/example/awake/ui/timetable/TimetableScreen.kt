@@ -754,15 +754,11 @@ private fun formatSyncTime(timestamp: Long?): String = timestamp?.let {
 
 
 private fun formatWeekDate(timetable: TimetableEntity?, week: Int): String? = runCatching {
-    val startDate = timetable?.startDate ?: return null
-    val parser = SimpleDateFormat("yyyy-MM-dd", Locale.CHINA).apply { isLenient = false }
-    val date = parser.parse(startDate) ?: return null
-    Calendar.getInstance().apply {
-        time = date
-        add(Calendar.DAY_OF_YEAR, (week - 1).coerceAtLeast(0) * 7)
-    }.let { calendar ->
-        SimpleDateFormat("yyyy/M/d", Locale.CHINA).format(calendar.time)
-    }
+    val start = com.example.awake.data.widget.parseTimetableDate(timetable?.startDate) ?: return null
+    val date = start.plusWeeks((week - 1).coerceAtLeast(0).toLong())
+    SimpleDateFormat("yyyy/M/d", Locale.CHINA).format(
+        java.sql.Date.valueOf(date.toString())
+    )
 }.getOrNull()
 
 

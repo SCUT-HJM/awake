@@ -59,7 +59,8 @@ object ReminderPlanner {
         minutesBefore: Int,
         clock: Clock = Clock.systemDefaultZone()
     ): List<Reminder> {
-        val startDate = runCatching { LocalDate.parse(timetable.startDate) }.getOrNull() ?: return emptyList()
+        val startDate = com.example.awake.data.widget.parseTimetableDate(timetable.startDate)
+            ?: return emptyList()
         val periods = periodConfigs.associateBy { it.period }
         val maxWeek = timetable.totalWeeks.coerceIn(1, 60)
 

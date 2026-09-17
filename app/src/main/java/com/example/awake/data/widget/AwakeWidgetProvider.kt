@@ -197,7 +197,7 @@ class AwakeWidgetProvider : AppWidgetProvider() {
             // 表头：星期字 + 当天日期号；查看本周时今天的列用主题主色加深，并显示圆点徽标
             // （对应 App 内表头的主题色文字 + 「今」圆形徽标）。查看其他周时全部为常规色。
             val todayDay = if (isCurrentWeek) LocalDate.now().dayOfWeek.value else 0
-            val weekStart = runCatching { LocalDate.parse(timetable.startDate) }.getOrNull()
+            val weekStart = parseTimetableDate(timetable.startDate)
             headerIds.forEachIndexed { index, id ->
                 val day = index + 1
                 val isToday = day == todayDay
@@ -295,7 +295,8 @@ class AwakeWidgetProvider : AppWidgetProvider() {
         timetable: com.example.awake.data.local.TimetableEntity,
         week: Int
     ): String = runCatching {
-        val start = LocalDate.parse(timetable.startDate).plusWeeks((week - 1).toLong())
+        val start = parseTimetableDate(timetable.startDate)?.plusWeeks((week - 1).toLong())
+            ?: return ""
         val end = start.plusDays(6)
         "${start.monthValue}/${start.dayOfMonth} – ${end.monthValue}/${end.dayOfMonth}"
     }.getOrDefault("")
