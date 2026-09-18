@@ -216,6 +216,8 @@ fun TimetableScreen(
                         },
                         onWeekSwipe = { delta -> viewModel.selectWeek(week + delta) },
                         todayDayOfWeek = todayDayOfWeek,
+                        weekStartDate = com.example.awake.data.widget.parseTimetableDate(selectedTimetable?.startDate)
+                            ?.plusWeeks((week - 1).coerceAtLeast(0).toLong()),
                         modifier = Modifier
                             .weight(1f)
                             .padding(horizontal = 8.dp)

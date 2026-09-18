@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -48,6 +49,7 @@ import com.example.awake.data.local.PeriodConfigDefaults
 import com.example.awake.data.local.PeriodConfigEntity
 import com.example.awake.domain.parser.WeekExpressionParser
 import com.example.awake.ui.theme.LocalDarkTheme
+import java.time.LocalDate
 
 private val GridLine = Color(0xFFD8E2E8)
 private val GridBackground = Color.Transparent
@@ -79,6 +81,8 @@ fun WeeklyTimetableGrid(
     onWeekSwipe: (Int) -> Unit = {},
     /** 当前周为本周时传入今天（周一=1…周日=7），用于把今天的表头加深刻画；查看其他周时为 null。 */
     todayDayOfWeek: Int? = null,
+    /** 本周第一天的日期（周一）；传入后表头数字显示实际日期号，未传时兜底显示星期序号。 */
+    weekStartDate: LocalDate? = null,
     modifier: Modifier = Modifier
 ) {
     val vertical = rememberScrollState()
@@ -217,6 +221,7 @@ fun WeeklyTimetableGrid(
                     dayNames = dayNames,
                     paletteByCourse = paletteByCourse,
                     todayDayOfWeek = null,
+                    weekStartDate = weekStartDate?.plusWeeks((previousWeek - currentWeek).toLong()),
                     onCourseClick = onCourseClick,
                     onEmptyClick = onEmptyClick
                 )
@@ -239,6 +244,7 @@ fun WeeklyTimetableGrid(
                     dayNames = dayNames,
                     paletteByCourse = paletteByCourse,
                     todayDayOfWeek = todayDayOfWeek,
+                    weekStartDate = weekStartDate,
                     onCourseClick = onCourseClick,
                     onEmptyClick = onEmptyClick
                 )
@@ -261,6 +267,7 @@ fun WeeklyTimetableGrid(
                     dayNames = dayNames,
                     paletteByCourse = paletteByCourse,
                     todayDayOfWeek = null,
+                    weekStartDate = weekStartDate?.plusWeeks((nextWeek - currentWeek).toLong()),
                     onCourseClick = onCourseClick,
                     onEmptyClick = onEmptyClick
                 )
@@ -287,6 +294,7 @@ private fun WeekGridPage(
     dayNames: List<String>,
     paletteByCourse: Map<Long, CoursePalette>,
     todayDayOfWeek: Int?,
+    weekStartDate: LocalDate?,
     onCourseClick: (Long) -> Unit,
     onEmptyClick: (dayOfWeek: Int, startPeriod: Int) -> Unit
 ) {
@@ -424,27 +432,22 @@ private fun WeekGridPage(
                                 color = todayColor
                             )
                             Text(
-                                text = day.toString(),
+                                text = weekStartDate?.plusDays((day - 1).toLong())?.dayOfMonth?.toString()
+                                    ?: day.toString(),
                                 style = MaterialTheme.typography.labelMedium,
                                 fontWeight = FontWeight.Bold,
                                 color = todayColor
                             )
                             if (todayDayOfWeek == day) {
+                                Spacer(modifier = Modifier.height(2.dp))
                                 Box(
                                     modifier = Modifier
-                                        .size(14.dp)
-                                        .background(MaterialTheme.colorScheme.primary, CircleShape),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Text(
-                                        text = "今",
-                                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 8.sp),
-                                        fontWeight = FontWeight.Bold,
-                                        color = MaterialTheme.colorScheme.onPrimary
-                                    )
-                                }
+                                        .width(14.dp)
+                                        .height(3.dp)
+                                        .background(MaterialTheme.colorScheme.primary, RoundedCornerShape(2.dp))
+                                )
                             } else {
-                                Spacer(modifier = Modifier.height(14.dp))
+                                Spacer(modifier = Modifier.height(16.dp))
                             }
                         }
                     }
