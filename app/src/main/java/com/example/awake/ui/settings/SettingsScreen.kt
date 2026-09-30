@@ -208,6 +208,9 @@ fun SettingsScreen(
     }
     val showOtherWeeks by displaySettings.showOtherWeeks.collectAsStateWithLifecycle()
     val periodsPerScreen by displaySettings.periodsPerScreen.collectAsStateWithLifecycle()
+    val showCourseName by displaySettings.showCourseName.collectAsStateWithLifecycle()
+    val showTeacher by displaySettings.showTeacher.collectAsStateWithLifecycle()
+    val showRoom by displaySettings.showRoom.collectAsStateWithLifecycle()
     val currentThemeMode by themeMode.collectAsStateWithLifecycle()
     val widgetPrefs = remember(context) { AwakeWidgetPrefs(context) }
     var widgetScreenOffRefresh by remember { mutableStateOf(widgetPrefs.screenOffRefresh()) }
@@ -791,9 +794,34 @@ fun SettingsScreen(
                 SettingsSection.DISPLAY -> {
                     Text("课表显示", style = MaterialTheme.typography.titleLarge)
                     Text(
-                        "开启后，当前课表中不属于所选周次的课程会保留在课表中，并以半透明显示。",
+                        "选择课表卡片和桌面小组件中显示的信息。课程详情中的完整数据不会受到影响。",
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                    DisplayToggle(
+                        title = "课程名称",
+                        checked = showCourseName,
+                        onCheckedChange = {
+                            displaySettings.setShowCourseName(it)
+                            AwakeWidgetUpdater.requestUpdate(context, resetToCurrentWeek = false)
+                        }
+                    )
+                    DisplayToggle(
+                        title = "教师",
+                        checked = showTeacher,
+                        onCheckedChange = {
+                            displaySettings.setShowTeacher(it)
+                            AwakeWidgetUpdater.requestUpdate(context, resetToCurrentWeek = false)
+                        }
+                    )
+                    DisplayToggle(
+                        title = "上课地点",
+                        checked = showRoom,
+                        onCheckedChange = {
+                            displaySettings.setShowRoom(it)
+                            AwakeWidgetUpdater.requestUpdate(context, resetToCurrentWeek = false)
+                        }
+                    )
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                     SettingsOption(
                         title = "课表纵向拉伸",
                         subtitle = "当前约一屏 $periodsPerScreen 节",
@@ -1176,6 +1204,22 @@ private enum class SettingsSection(val title: String) {
     APPEARANCE("深色模式"),
     ACCOUNT("会话与本地数据"),
     UPDATE("检查更新")
+}
+
+@Composable
+private fun DisplayToggle(
+    title: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Text(title)
+        Switch(checked = checked, onCheckedChange = onCheckedChange)
+    }
 }
 
 @Composable

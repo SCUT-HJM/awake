@@ -83,6 +83,9 @@ fun WeeklyTimetableGrid(
     todayDayOfWeek: Int? = null,
     /** 本周第一天的日期（周一）；传入后表头数字显示实际日期号，未传时兜底显示星期序号。 */
     weekStartDate: LocalDate? = null,
+    showCourseName: Boolean = true,
+    showTeacher: Boolean = true,
+    showRoom: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     val vertical = rememberScrollState()
@@ -222,6 +225,9 @@ fun WeeklyTimetableGrid(
                     paletteByCourse = paletteByCourse,
                     todayDayOfWeek = null,
                     weekStartDate = weekStartDate?.plusWeeks((previousWeek - currentWeek).toLong()),
+                    showCourseName = showCourseName,
+                    showTeacher = showTeacher,
+                    showRoom = showRoom,
                     onCourseClick = onCourseClick,
                     onEmptyClick = onEmptyClick
                 )
@@ -245,6 +251,9 @@ fun WeeklyTimetableGrid(
                     paletteByCourse = paletteByCourse,
                     todayDayOfWeek = todayDayOfWeek,
                     weekStartDate = weekStartDate,
+                    showCourseName = showCourseName,
+                    showTeacher = showTeacher,
+                    showRoom = showRoom,
                     onCourseClick = onCourseClick,
                     onEmptyClick = onEmptyClick
                 )
@@ -268,6 +277,9 @@ fun WeeklyTimetableGrid(
                     paletteByCourse = paletteByCourse,
                     todayDayOfWeek = null,
                     weekStartDate = weekStartDate?.plusWeeks((nextWeek - currentWeek).toLong()),
+                    showCourseName = showCourseName,
+                    showTeacher = showTeacher,
+                    showRoom = showRoom,
                     onCourseClick = onCourseClick,
                     onEmptyClick = onEmptyClick
                 )
@@ -295,6 +307,9 @@ private fun WeekGridPage(
     paletteByCourse: Map<Long, CoursePalette>,
     todayDayOfWeek: Int?,
     weekStartDate: LocalDate?,
+    showCourseName: Boolean,
+    showTeacher: Boolean,
+    showRoom: Boolean,
     onCourseClick: (Long) -> Unit,
     onEmptyClick: (dayOfWeek: Int, startPeriod: Int) -> Unit
 ) {
@@ -489,6 +504,9 @@ private fun WeekGridPage(
                                 totalWeeks = totalWeeks,
                                 palette = paletteByCourse[positioned.course.courseId]
                                     ?: paletteForAccent(positioned.course.color, LocalDarkTheme.current),
+                                showCourseName = showCourseName,
+                                showTeacher = showTeacher,
+                                showRoom = showRoom,
                                 onClick = { onCourseClick(positioned.course.courseId) }
                             )
                         }

@@ -94,6 +94,9 @@ fun TimetableScreen(
     val adjacentWeekPages by viewModel.adjacentWeekPages.collectAsStateWithLifecycle()
     val showOtherWeeks by viewModel.showOtherWeeks.collectAsStateWithLifecycle()
     val periodsPerScreen by viewModel.periodsPerScreen.collectAsStateWithLifecycle()
+    val showCourseName by viewModel.showCourseName.collectAsStateWithLifecycle()
+    val showTeacher by viewModel.showTeacher.collectAsStateWithLifecycle()
+    val showRoom by viewModel.showRoom.collectAsStateWithLifecycle()
     val showLengthEditor by viewModel.showLengthEditor.collectAsStateWithLifecycle()
     val periodConfigs by viewModel.periodConfigs.collectAsStateWithLifecycle()
     val message by viewModel.message.collectAsStateWithLifecycle()
@@ -218,6 +221,9 @@ fun TimetableScreen(
                         todayDayOfWeek = todayDayOfWeek,
                         weekStartDate = com.example.awake.data.widget.parseTimetableDate(selectedTimetable?.startDate)
                             ?.plusWeeks((week - 1).coerceAtLeast(0).toLong()),
+                        showCourseName = showCourseName,
+                        showTeacher = showTeacher,
+                        showRoom = showRoom,
                         modifier = Modifier
                             .weight(1f)
                             .padding(horizontal = 8.dp)

@@ -74,6 +74,7 @@ class TimetableViewModel(
         if (p == null) flowOf(emptyList()) else observe.timetables(p.id)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     private val selectedId = MutableStateFlow<Long?>(selection.read())
+    private var pendingExternalWeek: Pair<Long?, Int>? = null
     val currentWeek = MutableStateFlow(1)
     val selectedTimetableId: StateFlow<Long?> = combine(timetables, selectedId) { list, selected ->
         selected?.takeIf { id -> list.any { it.id == id } } ?: list.firstOrNull()?.id
@@ -116,6 +117,9 @@ class TimetableViewModel(
 
     val showOtherWeeks: StateFlow<Boolean> = displaySettings.showOtherWeeks
     val periodsPerScreen: StateFlow<Int> = displaySettings.periodsPerScreen
+    val showCourseName: StateFlow<Boolean> = displaySettings.showCourseName
+    val showTeacher: StateFlow<Boolean> = displaySettings.showTeacher
+    val showRoom: StateFlow<Boolean> = displaySettings.showRoom
     val showLengthEditor: StateFlow<Boolean> = displaySettings.showLengthEditor
     /** 节次时间跟随当前课表所属学校；课表有独立配置时优先使用独立配置。 */
     val periodConfigs: StateFlow<List<com.example.awake.data.local.PeriodConfigEntity>> =
@@ -153,8 +157,14 @@ class TimetableViewModel(
                 .filterNotNull()
                 .distinctUntilChanged { old, new -> old.id == new.id && old.startDate == new.startDate }
                 .collect { timetable ->
+                    val pending = pendingExternalWeek
+                    if (pending != null && (pending.first == null || pending.first == timetable.id)) {
+                        currentWeek.value = pending.second
+                        pendingExternalWeek = null
+                    } else {
                         // 开学日期未设置时保持第 1 周，用户仍可浏览和手动编辑课程。
                         currentWeek.value = currentWeekOf(timetable) ?: 1
+                    }
                 }
         }
     }
@@ -218,6 +228,20 @@ class TimetableViewModel(
 
     fun selectWeek(week: Int) {
         currentWeek.value = week.coerceIn(1, 30)
+    }
+
+    /** 从桌面小组件进入时，同时对齐组件绑定的课表和组件当前查看的周次。 */
+    fun openTimetableWeek(timetableId: Long?, week: Int?) {
+        val targetWeek = week?.coerceIn(1, 30)
+        if (targetWeek != null) pendingExternalWeek = timetableId to targetWeek
+        if (timetableId != null && timetableId != selectedId.value) {
+            selectTimetable(timetableId)
+        }
+        val selected = selectedTimetable.value
+        if (targetWeek != null && (timetableId == null || selected?.id == timetableId)) {
+            currentWeek.value = targetWeek
+            pendingExternalWeek = null
+        }
     }
 
     fun setPeriodsPerScreen(count: Int) {

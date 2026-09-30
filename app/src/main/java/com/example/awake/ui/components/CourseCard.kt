@@ -78,6 +78,9 @@ fun WeekGridCourseCard(
     currentWeek: Int = 1,
     totalWeeks: Int = 30,
     palette: CoursePalette? = null,
+    showCourseName: Boolean = true,
+    showTeacher: Boolean = true,
+    showRoom: Boolean = true,
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -128,15 +131,28 @@ fun WeekGridCourseCard(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.Center
                 ) {
-                    Text(
-                        text = course.name.ifBlank { "未命名" },
-                        style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.Bold,
-                        textAlign = TextAlign.Center,
-                        maxLines = if (span >= 3) 4 else 2,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    if (span >= 2 && course.room.isNotBlank()) {
+                    if (showCourseName) {
+                        Text(
+                            text = course.name.ifBlank { "未命名" },
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            textAlign = TextAlign.Center,
+                            maxLines = if (span >= 3) 4 else 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    if (showTeacher && course.teacher.isNotBlank()) {
+                        Text(
+                            text = course.teacher,
+                            style = MaterialTheme.typography.labelSmall,
+                            fontSize = 9.sp,
+                            textAlign = TextAlign.Center,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.padding(top = 1.dp)
+                        )
+                    }
+                    if (showRoom && course.room.isNotBlank()) {
                         Text(
                             text = "@${course.room}",
                             style = MaterialTheme.typography.labelSmall,

@@ -65,6 +65,10 @@ class AwakeWidgetListService : RemoteViewsService() {
         private var widgetBackground = 0
         private var viewedWeek = 1
         private var totalWeeks = 30
+        private var showCourseName = true
+        private var showTeacher = true
+        private var showRoom = true
+        private var timetableId: Long? = null
 
         override fun onCreate() = Unit
 
@@ -95,15 +99,20 @@ class AwakeWidgetListService : RemoteViewsService() {
                 ?: return emptyList()
 
             val totalWeeks = timetable.totalWeeks.coerceIn(1, 30)
+            timetableId = timetable.id
             this.totalWeeks = totalWeeks
             val storedWeek = prefs.week(widgetId)
             val week = if (storedWeek in 1..totalWeeks) storedWeek else currentWeekOf(timetable) ?: 1
             viewedWeek = week
+            val displaySettings = TimetableDisplaySettingsStore(context)
+            showCourseName = displaySettings.showCourseName.value
+            showTeacher = displaySettings.showTeacher.value
+            showRoom = displaySettings.showRoom.value
             // 候选课程与 App 内完全同语义：
             // - 「显示非本周」开（默认）：本周或未来仍有课的时段（observeSlotsThroughEnd）；
             // - 关：仅本周时段（observeSlotsForWeek）。
             // 周次一律重新解析 rawWeekText；解析不出周次的时段两侧查询都不会返回，同样排除。
-            val showOtherWeeks = TimetableDisplaySettingsStore(context).showOtherWeeks.value
+            val showOtherWeeks = displaySettings.showOtherWeeks.value
             val weeksBySection = HashMap<Long, Set<Int>>()
             val candidates = local.getAllSlots(timetable.id).filter { slot ->
                 val weeks = WeekExpressionParser.parse(slot.rawWeekText, totalWeeks).weeks
@@ -321,6 +330,7 @@ class AwakeWidgetListService : RemoteViewsService() {
                 empty.setInt(R.id.widget_empty_bg, "setBackgroundColor", WidgetPalette.emptyPeriodBackground(dark))
                 empty.setTextViewText(R.id.widget_empty_tx, row.emptyLabel)
                 empty.setTextColor(R.id.widget_empty_tx, WidgetPalette.textSecondary(dark))
+                empty.setOnClickFillInIntent(R.id.widget_empty_bg, openWeekFillInIntent())
                 return empty
             }
             val layout = rowLayouts[(row.span - 1).coerceIn(rowLayouts.indices)]
@@ -334,6 +344,7 @@ class AwakeWidgetListService : RemoteViewsService() {
                 views.setTextColor(labelTimeIds[index], WidgetPalette.textSecondary(dark))
             }
             (1..7).forEach { day ->
+                val cellId = cellIds[day - 1]
                 val borderId = borderIds[day - 1]
                 val fillId = fillIds[day - 1]
                 val txId = textIds[day - 1]
@@ -342,6 +353,7 @@ class AwakeWidgetListService : RemoteViewsService() {
                     views.setImageViewResource(borderId, 0)
                     views.setImageViewResource(fillId, 0)
                     views.setTextViewText(txId, "")
+                    views.setOnClickFillInIntent(cellId, openWeekFillInIntent())
                 } else {
                     val palette = WidgetPalette.paletteForAccent(piece.course.color, dark)
                     // 非本周课程整卡淡化：把 42% 透明度预混到组件底色上（视觉等价 App 内 alpha）。
@@ -363,20 +375,27 @@ class AwakeWidgetListService : RemoteViewsService() {
                         txId,
                         if (piece.kind == PieceKind.FULL || piece.kind == PieceKind.TOP) courseText(piece) else ""
                     )
+                    views.setOnClickFillInIntent(cellId, openWeekFillInIntent())
                 }
             }
             return views
         }
 
-        /** 课程格文字：课程名（连堂 ≥2 节追加 @教室，与 App 一致）+ 单双周标注（与 App 的 pill 同规则）。 */
+        private fun openWeekFillInIntent() = Intent().apply {
+            timetableId?.let { putExtra(WidgetNavigation.EXTRA_TIMETABLE_ID, it) }
+            putExtra(WidgetNavigation.EXTRA_WEEK, viewedWeek)
+        }
+
+        /** 课程格文字跟随课表显示设置；单双周标注始终保留。 */
         private fun courseText(piece: CellPiece): String {
             val course = piece.course
-            val text = StringBuilder(course.name.ifBlank { "未命名" })
-            val span = course.endPeriod - course.startPeriod + 1
-            if (span >= 2 && course.room.isNotBlank()) text.append("\n@").append(course.room)
+            val lines = mutableListOf<String>()
+            if (showCourseName) lines += course.name.ifBlank { "未命名" }
+            if (showTeacher && course.teacher.isNotBlank()) lines += course.teacher
+            if (showRoom && course.room.isNotBlank()) lines += "@${course.room}"
             val tag = weekParityLabel(course.rawWeekText, viewedWeek, totalWeeks)
-            if (tag != null) text.append("\n").append(tag)
-            return text.toString()
+            if (tag != null) lines += tag
+            return lines.joinToString("\n")
         }
 
         private fun borderDrawable(kind: PieceKind): Int = when (kind) {
@@ -419,6 +438,11 @@ class AwakeWidgetListService : RemoteViewsService() {
             R.id.widget_cell_border_1, R.id.widget_cell_border_2, R.id.widget_cell_border_3,
             R.id.widget_cell_border_4, R.id.widget_cell_border_5, R.id.widget_cell_border_6,
             R.id.widget_cell_border_7
+        )
+        private val cellIds = intArrayOf(
+            R.id.widget_cell_1, R.id.widget_cell_2, R.id.widget_cell_3,
+            R.id.widget_cell_4, R.id.widget_cell_5, R.id.widget_cell_6,
+            R.id.widget_cell_7
         )
         private val fillIds = intArrayOf(
             R.id.widget_cell_bg_1, R.id.widget_cell_bg_2, R.id.widget_cell_bg_3,

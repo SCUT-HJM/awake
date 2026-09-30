@@ -11,6 +11,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.LaunchedEffect
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -40,9 +41,15 @@ import com.example.awake.ui.timetable.CourseEditorViewModelFactory
 import com.example.awake.ui.timetable.TimetableScreen
 import com.example.awake.ui.timetable.TimetableViewModel
 import com.example.awake.ui.timetable.TimetableViewModelFactory
+import com.example.awake.data.widget.WidgetOpenRequest
+import kotlinx.coroutines.flow.StateFlow
 
 @Composable
-fun AppNavHost(container: AppContainer) {
+fun AppNavHost(
+    container: AppContainer,
+    widgetOpenRequest: StateFlow<WidgetOpenRequest?>,
+    onWidgetOpenConsumed: () -> Unit
+) {
     val navController = rememberNavController()
     val updateState by container.updateManager.state.collectAsState()
     val observe = ObserveTimetableUseCase(container.localRepository)
@@ -54,6 +61,16 @@ fun AppNavHost(container: AppContainer) {
         container.timetableSelectionStore, container.timetableDisplaySettingsStore, container.scheduleRouter,
         container.jsonTimetableStore
     ))
+    val widgetRequest by widgetOpenRequest.collectAsState()
+    LaunchedEffect(widgetRequest?.token) {
+        val request = widgetRequest ?: return@LaunchedEffect
+        timetableVm.openTimetableWeek(request.timetableId, request.week)
+        navController.navigate(Routes.TIMETABLE) {
+            launchSingleTop = true
+            popUpTo(Routes.TIMETABLE) { inclusive = false }
+        }
+        onWidgetOpenConsumed()
+    }
     NavHost(navController = navController, startDestination = Routes.TIMETABLE) {
         composable(Routes.TIMETABLE) {
             TimetableScreen(

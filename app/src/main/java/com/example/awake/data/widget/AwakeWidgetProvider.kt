@@ -166,9 +166,9 @@ class AwakeWidgetProvider : AppWidgetProvider() {
 
         fun buildViews(): RemoteViews {
             val views = RemoteViews(context.packageName, R.layout.widget_timetable)
-            attachRootAndNavIntents(context, views, widgetId)
 
             if (timetable == null) {
+                attachRootAndNavIntents(context, views, widgetId, null, null)
                 views.setTextViewText(R.id.widget_title, "Awake 课表")
                 views.setTextViewText(R.id.widget_subtitle, "还没有本地课表")
                 views.setTextViewText(R.id.widget_empty, "打开 App 导入或创建课表")
@@ -186,6 +186,7 @@ class AwakeWidgetProvider : AppWidgetProvider() {
             val actualWeek = currentWeekOf(timetable)
             val week = if (storedWeek in 1..totalWeeks) storedWeek else actualWeek ?: 1
             if (week != storedWeek) prefs.setWeek(widgetId, week)
+            attachRootAndNavIntents(context, views, widgetId, timetable.id, week)
             val isCurrentWeek = actualWeek != null && week == actualWeek
             views.setTextViewText(R.id.widget_title, "第 $week 周 · ${timetable.label}")
             views.setTextViewText(
@@ -248,16 +249,39 @@ class AwakeWidgetProvider : AppWidgetProvider() {
             ?: repository.getFirstTimetable()
     }
 
-    private fun attachRootAndNavIntents(context: Context, views: RemoteViews, widgetId: Int) {
-        views.setOnClickPendingIntent(
-            R.id.widget_root,
+    private fun attachRootAndNavIntents(
+        context: Context,
+        views: RemoteViews,
+        widgetId: Int,
+        timetableId: Long?,
+        week: Int?
+    ) {
+        val openWeekIntent = PendingIntent.getActivity(
+            context,
+            widgetId,
+            Intent(context, MainActivity::class.java).apply {
+                action = WidgetNavigation.ACTION_OPEN_WEEK
+                timetableId?.let { putExtra(WidgetNavigation.EXTRA_TIMETABLE_ID, it) }
+                week?.let { putExtra(WidgetNavigation.EXTRA_WEEK, it) }
+                flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            },
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        views.setOnClickPendingIntent(R.id.widget_root, openWeekIntent)
+        views.setOnClickPendingIntent(R.id.widget_title, openWeekIntent)
+        views.setOnClickPendingIntent(R.id.widget_subtitle, openWeekIntent)
+        views.setPendingIntentTemplate(
+            R.id.widget_list,
             PendingIntent.getActivity(
                 context,
-                widgetId,
+                REQUEST_OFFSET + 500 + widgetId,
                 Intent(context, MainActivity::class.java).apply {
+                    action = WidgetNavigation.ACTION_OPEN_WEEK
+                    timetableId?.let { putExtra(WidgetNavigation.EXTRA_TIMETABLE_ID, it) }
+                    week?.let { putExtra(WidgetNavigation.EXTRA_WEEK, it) }
                     flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
                 },
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
             )
         )
         views.setOnClickPendingIntent(

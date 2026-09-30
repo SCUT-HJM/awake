@@ -11,10 +11,16 @@ class TimetableDisplaySettingsStore(context: Context) {
         private const val PREFS_NAME = "awake_timetable_display_settings"
         private const val KEY_SHOW_OTHER_WEEKS = "show_other_weeks"
         private const val KEY_PERIODS_PER_SCREEN = "periods_per_screen"
+        private const val KEY_SHOW_COURSE_NAME = "show_course_name"
+        private const val KEY_SHOW_TEACHER = "show_teacher"
+        private const val KEY_SHOW_ROOM = "show_room"
         const val DEFAULT_PERIODS_PER_SCREEN = 11
         const val MIN_PERIODS_PER_SCREEN = 6
         const val MAX_PERIODS_PER_SCREEN = 14
         const val DEFAULT_SHOW_OTHER_WEEKS = true
+        const val DEFAULT_SHOW_COURSE_NAME = true
+        const val DEFAULT_SHOW_TEACHER = true
+        const val DEFAULT_SHOW_ROOM = true
     }
 
     private val preferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -30,6 +36,21 @@ class TimetableDisplaySettingsStore(context: Context) {
     )
     val periodsPerScreen: StateFlow<Int> = _periodsPerScreen.asStateFlow()
 
+    private val _showCourseName = MutableStateFlow(
+        preferences.getBoolean(KEY_SHOW_COURSE_NAME, DEFAULT_SHOW_COURSE_NAME)
+    )
+    val showCourseName: StateFlow<Boolean> = _showCourseName.asStateFlow()
+
+    private val _showTeacher = MutableStateFlow(
+        preferences.getBoolean(KEY_SHOW_TEACHER, DEFAULT_SHOW_TEACHER)
+    )
+    val showTeacher: StateFlow<Boolean> = _showTeacher.asStateFlow()
+
+    private val _showRoom = MutableStateFlow(
+        preferences.getBoolean(KEY_SHOW_ROOM, DEFAULT_SHOW_ROOM)
+    )
+    val showRoom: StateFlow<Boolean> = _showRoom.asStateFlow()
+
     /** 主课表页底部“课表纵向长度”编辑框，从设置页请求打开。 */
     private val _showLengthEditor = MutableStateFlow(false)
     val showLengthEditor: StateFlow<Boolean> = _showLengthEditor.asStateFlow()
@@ -43,6 +64,21 @@ class TimetableDisplaySettingsStore(context: Context) {
         val bounded = count.coerceIn(MIN_PERIODS_PER_SCREEN, MAX_PERIODS_PER_SCREEN)
         preferences.edit().putInt(KEY_PERIODS_PER_SCREEN, bounded).apply()
         _periodsPerScreen.value = bounded
+    }
+
+    fun setShowCourseName(enabled: Boolean) {
+        preferences.edit().putBoolean(KEY_SHOW_COURSE_NAME, enabled).apply()
+        _showCourseName.value = enabled
+    }
+
+    fun setShowTeacher(enabled: Boolean) {
+        preferences.edit().putBoolean(KEY_SHOW_TEACHER, enabled).apply()
+        _showTeacher.value = enabled
+    }
+
+    fun setShowRoom(enabled: Boolean) {
+        preferences.edit().putBoolean(KEY_SHOW_ROOM, enabled).apply()
+        _showRoom.value = enabled
     }
 
     fun requestShowLengthEditor() {
