@@ -56,12 +56,20 @@ class AppUpdateManager(
 
     private var majorCheckStarted = false
 
-    /** 打开应用时检查一次跨大版本更新；提醒展示后写入偏好，后续启动不再重复提醒。 */
+    /**
+     * 打开应用时检查跨大版本更新。
+     *
+     * 每天最多检查一次：之前每次启动都会请求 Releases 接口，配合共享出口 IP
+     * 很容易触发 GitHub 匿名限流。提醒展示后写入偏好，后续启动不再重复提醒。
+     */
     fun checkMajorUpdate() {
         if (majorCheckStarted) return
         majorCheckStarted = true
+        val today = java.time.LocalDate.now().toString()
+        if (prefs.getString(KEY_LAST_MAJOR_CHECK_DAY, null) == today) return
         scope.launch {
             val release = runCatching { checker.fetchLatestRelease() }.getOrNull() ?: return@launch
+            prefs.edit().putString(KEY_LAST_MAJOR_CHECK_DAY, today).apply()
             val current = _state.value
             if (release.versionCode <= current.currentVersionCode) return@launch
             val currentTrain = majorTrain(current.currentVersionName) ?: return@launch
@@ -106,7 +114,16 @@ class AppUpdateManager(
                 }
                 .onFailure { error ->
                     _state.update {
-                        it.copy(status = "检查失败：${error.message ?: "网络异常"}。可手动访问 github.com/SCUT-HJM/awake/releases")
+                        // 网络受限时回退到上次成功获取的版本信息，至少让用户知道有无更新。
+                        val cached = it.latest
+                        val fallback = if (cached != null &&
+                            GitHubReleaseChecker.hasUpdate(cached.versionCode, it.currentVersionCode)
+                        ) {
+                            "连接 GitHub 失败，但上次检测到 ${cached.versionName} 可用。可手动访问 github.com/SCUT-HJM/awake/releases"
+                        } else {
+                            "检查失败：${error.message ?: "网络异常"}。可手动访问 github.com/SCUT-HJM/awake/releases"
+                        }
+                        it.copy(status = fallback)
                     }
                 }
             _state.update { it.copy(checking = false) }
@@ -114,7 +131,6 @@ class AppUpdateManager(
     }
 
     fun startDownload(release: GitHubRelease) {
-        val url = release.apkUrl ?: return
         if (_state.value.downloading) return
         scope.launch {
             _state.update {
@@ -122,9 +138,22 @@ class AppUpdateManager(
                     downloading = true,
                     downloadProgress = 0f,
                     showUpdateDialog = false,
-                    status = "正在下载 ${release.versionName} …"
+                    status = "正在准备下载 ${release.versionName} …"
                 )
             }
+            // 订阅源推导出的地址可能是 404（asset 命名不一致），先探测，
+            // 无效时回落 API 取准确地址；两者都拿不到就提示改用浏览器。
+            val url = checker.resolveApkUrl(release)
+            if (url == null) {
+                _state.update {
+                    it.copy(
+                        downloading = false,
+                        status = "未找到可用的安装包地址，请在浏览器中打开 Releases 页面下载"
+                    )
+                }
+                return@launch
+            }
+            _state.update { it.copy(status = "正在下载 ${release.versionName} …") }
             runCatching {
                 ApkUpdateSupport.downloadApk(
                     context = appContext,
@@ -231,5 +260,6 @@ class AppUpdateManager(
     private companion object {
         const val PREFS_NAME = "awake_update_settings"
         const val KEY_ACK_MAJOR_TRAIN = "acknowledged_major_train"
+        const val KEY_LAST_MAJOR_CHECK_DAY = "last_major_check_day"
     }
 }
