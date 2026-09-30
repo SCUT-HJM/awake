@@ -11,6 +11,9 @@ local.properties
 # Compiled artifacts
 *.class
 
+# Local release APK copies (distributed via GitHub Releases, not Git)
+/awake_*.apk
+
 # Local screenshots, dumps and manual test captures
 /awake-*.png
 /black-screen-*.png
